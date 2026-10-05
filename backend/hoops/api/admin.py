@@ -172,7 +172,8 @@ def models(league: str = "nba", season: int | None = None,
         SELECT e.model_name, e.exam_round, e.tuning_seasons, e.exam_season, e.created_at,
                count(*) AS candidates,
                max(e.exam_metrics::text) FILTER (WHERE e.is_winner)::jsonb AS winner_exam,
-               min(v.version) FILTER (WHERE e.is_winner) AS winner,
+               string_agg(v.version, ' + ' ORDER BY v.version)
+                   FILTER (WHERE e.is_winner) AS winner,   -- several when a blend won
                jsonb_agg(jsonb_build_object('version', v.version,
                                             'tuning', e.tuning_metrics,
                                             'winner', e.is_winner)
