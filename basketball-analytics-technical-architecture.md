@@ -1,500 +1,370 @@
 # Basketball Analytics App: Technical Architecture
 
-Last updated: 2026-10-05 (end of design phase)
+Last updated: 2026-10-05 (end of architecture phase, pending owner sign-off)
 Companion document: `basketball-analytics-feature-spec.md` (feature numbers below refer to it)
 
 ## 1. Context for a new session
 
-This document is a handoff. It proposes an architecture for the app described in the feature spec. Nothing has been built yet.
+This document is the architecture for the app described in the feature spec. Nothing has been built yet.
 
-- **Project phases:** design (complete), then architecture, build, testing, and deploy. Do not skip phases. Do not write application code before the architecture phase is signed off.
-- **Status of this design:** the design phase updated this document with its decisions: data-source findings (section 4.0), hosting, cut features, and versions (section 12). The technology stack in section 3, the storage design, and the schema in section 6 are still proposals for the architecture phase to confirm or change.
-- **First step for the next session:** start the architecture phase. Review the stack, run the data-source checks in section 4.6, and resolve the open questions in section 14.
-- **Target:** V1 launches at the start of the NBA regular season. The NCAA version (V4) should be running and graded daily well before the tournament. The docs track scope by version, not by date.
+- **Project phases:** design (complete), architecture (this document), then build, testing, and deploy. Do not skip phases. Build starts only after the owner signs off on this document.
+- **Next step:** build V1 (section 16). Deploy the data pipeline to the VPS early enough to run a dress rehearsal on NBA preseason games (section 14).
+- **Target:** V1 launches at the start of the NBA regular season. The docs track scope by version, not by date.
+- **Decisions in this document were made with the owner** during the design and architecture phases. Where a choice is still open, it is listed in section 18.
 
-## 2. Requirements that drive the design
+## 2. Requirements and constraints
 
-| Requirement | Consequence |
+| Requirement or constraint | Consequence |
 | --- | --- |
-| Two leagues, one engine | League-specific code sits behind a common adapter interface. Models are parameterized by league. |
-| Core must run without add-ons | Add-on outputs are optional model inputs. A capability matrix says which features each league supports. |
-| Near-realtime during games | A poller, a live state store, and a push channel to clients. Target delay from feed to screen: under 15 seconds. |
-| Small samples | Bayesian or shrinkage-based estimators with priors and uncertainty, not plain averages. |
-| Predictions graded honestly | Predictions are written once, timestamped before tip-off, and never updated. |
-| Small audience (a friend group) | One server is enough. Favor simple operations over scale. |
-| Everything runs on the owner's existing VPS | No home machine for ingestion. Sources that block the VPS are dropped, along with the features that need them. |
-| Free data by default | Paying for data needs a strong case. ESPN is the primary source for both leagues. |
-| NCAA is Division I only | Games against non-Division I opponents are excluded at ingestion, from ratings, predictions, and player stats. |
-| Open link, no sign-in | Read-only public routes. One admin login for owner actions. |
-| Unofficial data sources | Cache everything, keep raw responses, and have a fallback source for each critical feed. |
+| Two leagues, one engine | League-specific rules sit behind a common interface. Models are parameterized by league and fit separately per league. |
+| Core runs without add-ons | Add-on outputs are optional model inputs. A capability matrix says which features each league supports. |
+| Near-realtime during games (V2) | A live poller, live state in Postgres, and a push channel to browsers. |
+| Small samples | Shrinkage toward priors, with uncertainty ranges on every rating. |
+| Predictions graded honestly | Predictions are locked 30 minutes before tip-off and are append-only. Only locked predictions are graded. |
+| Small audience (a friend group) | One server. Favor simple operations over scale. |
+| Runs on the owner's existing VPS | 2 CPU cores, 7.8 GB RAM (about 6.5 GB free; other services already run there), 136 GB free disk, Debian 13, Podman (no Docker). The app should stay under about 3 to 4 GB of RAM at peak, and heavy jobs run at low CPU priority. |
+| Free data by default | ESPN's public site API is the only data source. |
+| NCAA is Division I only | Games against non-Division I opponents are dropped at ingestion. |
+| Open link, no sign-in | Public read-only routes. One admin login (V1.1). |
+| Unofficial data source | Keep every raw response, validate every game, and show "data delayed" when updates stop. |
+| Language | Python only for the backend, worker, and models. TypeScript for the website. |
 
-## 3. System overview
-
-```mermaid
-flowchart LR
-  subgraph Sources
-    A1[NBA.com stats via nba_api<br/>conditional: tracking, matchups,<br/>defender distance]
-    A2[ESPN unofficial API<br/>primary for NBA and NCAA:<br/>games, box scores, plays,<br/>injuries, lines, win probability]
-    A3[CollegeBasketballData API<br/>optional NCAA backup]
-    A4[ESPN injury statuses]
-    A5[ESPN betting lines<br/>benchmark only]
-  end
-
-  subgraph Ingestion
-    B1[Batch jobs<br/>nightly and hourly]
-    B2[Live poller<br/>every 5 to 10 s per live game]
-    B3[League adapters<br/>NBA, NCAA]
-  end
-
-  subgraph Storage
-    C1[(Raw store<br/>JSON files)]
-    C2[(Postgres<br/>normalized data, outputs)]
-    C3[(Redis<br/>live game state, pub/sub)]
-    C4[(Parquet + DuckDB<br/>modeling datasets)]
-  end
-
-  subgraph Models
-    D1[Team ratings]
-    D2[Game predictor]
-    D3[Live win probability]
-    D4[Insight detectors]
-    D5[Simulators]
-    D6[Player models]
-    D7[NBA add-ons]
-    D8[NCAA add-ons]
-    D9[Evaluation]
-  end
-
-  subgraph Serving
-    E1[REST API]
-    E2[WebSocket or SSE]
-    E3[Web client]
-  end
-
-  A1 --> B3
-  A2 --> B3
-  A3 --> B3
-  A4 --> B1
-  A5 --> B1
-  B3 --> B1
-  B3 --> B2
-  B1 --> C1
-  B1 --> C2
-  B2 --> C3
-  B2 --> C2
-  C2 --> C4
-  C4 --> D1
-  D1 --> D2
-  D7 --> D2
-  D8 --> D1
-  D2 --> D5
-  D2 --> D3
-  C3 --> D3
-  C3 --> D4
-  D6 --> D7
-  D1 --> C2
-  D2 --> C2
-  D5 --> C2
-  D6 --> C2
-  D9 --> C2
-  D3 --> C3
-  D4 --> C3
-  C2 --> E1
-  C3 --> E2
-  E1 --> E3
-  E2 --> E3
-```
-
-**Proposed stack (to be confirmed in the architecture phase).**
+## 3. Technology stack (approved)
 
 | Layer | Choice | Reason |
 | --- | --- | --- |
-| Data and models | Python 3.11+, pandas or polars, scikit-learn, statsmodels, LightGBM, PyMC or NumPyro (optional) | `nba_api` and most basketball tooling are Python |
-| Service API | FastAPI | Async, typed, has WebSocket support |
-| Database | Postgres | Relational data, JSON columns for raw payloads |
-| Live state | Redis | Fast key-value state and pub/sub for push |
-| Modeling datasets | Parquet files queried with DuckDB | Fast local analytics without loading Postgres |
-| Scheduling | APScheduler or cron to start, Prefect if jobs grow | Simple first |
-| Frontend | Next.js (React, TypeScript), a charting library such as Recharts or visx | Works on phones and desktops from one codebase |
-| Deployment | Docker Compose on the owner's existing VPS | Enough for a friend group. Decided in design. |
+| Backend language | Python 3.13 | Debian 13's version. The modeling libraries are Python. |
+| Data and models | pandas, numpy, scipy, scikit-learn | Ratings, simulations, and win probability are small statistical models. LightGBM may be added later if a candidate needs it. |
+| API | FastAPI with uvicorn | Async, typed, supports server-sent events for V2 |
+| Database | Postgres 17 | All data fits comfortably (estimated 5 to 8 GB for 5 seasons of both leagues). `pg_trgm` for fuzzy search. `LISTEN/NOTIFY` for live updates. |
+| Background work | One Python worker process with a built-in scheduler (APScheduler) | Daily jobs, injury checks, prediction locks, and game-final processing in one place |
+| Website | React + TypeScript, built with Vite into static files | No server-side rendering needed. Static files use almost no server memory. |
+| Website libraries | TanStack Table (sorting), TanStack Virtual (virtual scrolling), Recharts (charts) | Sortable tables that stay fast with thousands of rows |
+| Internal web server | Caddy, inside the app stack, on `127.0.0.1:8080` | Serves the website files and forwards `/api` to the API |
+| Public HTTPS | The owner's existing Caddy | Handles `hoops.<owner's domain>` and forwards to the app stack |
+| Containers | Podman with Quadlet (systemd units) | Services start on boot and restart on failure. Built into Debian 13. |
+| CI | GitHub Actions | Lint and tests on every push |
 
-## 4. External data sources and APIs
+Not used, by decision: Redis, Parquet/DuckDB, Next.js, Go, Docker, `nba_api`.
 
-### 4.0 Findings from checks on 2026-10-04 (design phase)
+## 4. Data source: ESPN
 
-These checks were run with command-line requests from a cloud server, and two NBA.com checks were repeated by the owner from the VPS and a home network. They supersede the assumptions in 4.1 to 4.4 where they conflict.
+### 4.1 Endpoints
 
-| Source | Result |
+`{league}` is `nba` or `mens-college-basketball`.
+
+| Purpose | Endpoint |
 | --- | --- |
-| ESPN scoreboard and summary, NBA and NCAA | Works from a cloud server. The summary has the box score, a `plays` array with shot coordinates, injuries, `pickcenter` betting lines, and a `winprobability` series (seen for the NBA; not checked for the NCAA). |
-| ESPN history (NBA) | Play-by-play back to at least 2015-16. Team box score statistics are empty for 2015-16 and complete from 2016-17. Betting lines exist for past games (providers such as "consensus" for older seasons, DraftKings for recent ones). Whether these are closing lines is unknown. |
-| ESPN scoreboard date ranges | Rejected (`dates=YYYYMMDD-YYYYMMDD` returns HTTP 400). One request per date: about 270 scoreboard calls plus about 1,230 summaries per NBA season. |
-| ESPN play order | `sequenceNumber` is not chronological: late corrections get higher numbers. The order of the `plays` array is the game order. |
-| ESPN shot coordinates | Missing coordinates use large negative sentinel values and must be treated as missing. |
-| stats.nba.com | Timed out with browser-like headers from the cloud server, the owner's VPS, and the owner's home network. This suggests bot detection of command-line clients rather than an IP block. Untested with `nba_api`. |
-| cdn.nba.com | HTTP 403 ("Access Denied", Akamai) from the cloud server, the VPS, and the home network for command-line requests. Untested with `nba_api`. |
-| NBA injury report PDFs | HTTP 403 from the cloud server. |
-| CollegeBasketballData, The Odds API | Reachable, but need an API key (HTTP 401). Not tested further. ESPN's betting lines may make The Odds API unnecessary. |
+| Games for one date | `site.api.espn.com/apis/site/v2/sports/basketball/{league}/scoreboard?dates=YYYYMMDD` (college also needs `&groups=50&limit=500`) |
+| One game: box score, plays, injuries, lines, win probability | `site.web.api.espn.com/apis/site/v2/sports/basketball/{league}/summary?event={id}` |
+| Division I team list | `site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams?groups=50&limit=500` |
+| Open and close betting lines | `sports.core.api.espn.com/v2/sports/basketball/leagues/{league}/events/{id}/competitions/{id}/odds` |
+| Injuries (league-wide) | ESPN injuries endpoint for each league; confirm the exact path during build |
 
-**Consequences for design:** ESPN is the primary source for both leagues. NBA.com is optional and only feeds features 13, the tracking version of 14, and defender distance in 10. If `nba_api` cannot reach NBA.com from the VPS, those features are dropped or use their ESPN-based versions.
+### 4.2 Verified behavior (checks run 2026-10-04 and 2026-10-05)
 
-### 4.1 NBA
+| Topic | Finding |
+| --- | --- |
+| Coverage | Box scores, play-by-play with shot coordinates, injuries, betting lines, and ESPN's win probability for both leagues. ESPN's college win probability exists from about 2017-18. |
+| History | NBA team box scores are complete from 2016-17 (we use 2021-22 onward). College box scores and play-by-play go back to at least 2005-06. |
+| Date ranges | Not supported: one scoreboard request per date. |
+| Play order | The order of the `plays` array is game order. `sequenceNumber` is not chronological. The game clock never runs backward within a period in sampled data. |
+| Running score field | Unreliable on some plays: a non-scoring play can carry a stale score, and plays after a late-inserted play can carry stale scores. The final score is correct. Rebuild the running score from scoring plays. |
+| Free throws | In older seasons, made free throws have `scoreValue` 0. Treat a made free throw as 1 point. |
+| Shot coordinates | Missing values use large negative sentinels. Treat them as missing. |
+| Substitutions | NBA: "X enters the game for Y", consistent in sampled games from 2018-19 on. College: separate "subbing in" and "subbing out" events; present in recent seasons, absent in some older ones. |
+| Division I | 362 Division I teams. Non-Division I opponents are common in November and easy to identify. |
+| Betting lines | For a recent game, the summary line equalled the core API's labeled closing line. Older games have no open/close labels. From launch, we record lines ourselves near tip-off. |
+| NBA.com | Out of scope, by decision. |
 
-| Source | What it provides | Access | Limits and risks | Verified |
-| --- | --- | --- | --- | --- |
-| `nba_api` (Python, PyPI, v1.11.3) | Wrapper for NBA.com. `nba_api.stats` covers historical and season data. `nba_api.live` covers live scoreboard, box score, and play-by-play. | Free, no key, Python 3.10+ | Unofficial. NBA.com does not announce endpoint changes. | Yes: PyPI page |
-| stats.nba.com (through `nba_api.stats`) | Game logs, box scores, play-by-play, shot charts, lineups, matchups, clutch, hustle, tracking summaries, defender-distance shooting | Free | Rejects requests without browser-like headers (User-Agent, Referer, Host). Add 1 to 3 seconds between calls. Reported to block some cloud server IP ranges (from general knowledge, not verified this session). | Partly |
-| cdn.nba.com live data (through `nba_api.live`) | Live scoreboard, live box score, live play-by-play as JSON | Free | Unofficial. Delay behind real time is not documented. | Partly |
-| `nbainjuries` (Python, PyPI, v1.1.1, MIT) | Official NBA injury report as structured data, current and historical, from 2021-22 onward, in 15-minute or hourly snapshots | Free | May need a Java runtime for PDF parsing (not verified). Alternative: `nba-injury-report` on PyPI, licensed AGPL-3.0. | Yes: PyPI page |
-| ESPN unofficial API | Fallback for scores, box scores, play-by-play | Free, no key | No documentation, no guarantee, endpoints can change | Yes: several guides |
+### 4.3 Data quality sample (2026-10-05)
 
-**stats.nba.com endpoints to use** (names as exposed by `nba_api.stats.endpoints`; confirm against the installed version):
+About 25 random completed games per season, per league. Rough rates; the build runs the checks on every game.
 
-| Purpose | Endpoint | Features |
-| --- | --- | --- |
-| Schedule and results | `leaguegamefinder`, `scheduleleaguev2` | 1, 2, 6 |
-| Box scores | `boxscoretraditionalv3`, `boxscoreadvancedv3` | 1, 7 |
-| Play-by-play | `playbyplayv3` | 4, 5, 11, 12 |
-| Shot locations | `shotchartdetail` | 10 |
-| Lineups | `leaguedashlineups` | 12 |
-| Rosters and players | `commonteamroster`, `commonallplayers` | 7 |
-| Hustle stats | `leaguehustlestatsplayer` | 14 |
-| Tracking summaries (drives, touches, passing, speed and distance) | `leaguedashptstats` with `PtMeasureType` | 14 |
-| Shooting by defender distance | `leaguedashplayerptshot`, `leaguedashteamptshot` with `CloseDefDistRange` | 10 |
-| Defended shots | `leaguedashptdefend` | 13 |
-| Matchups | `boxscorematchupsv3`, `leagueseasonmatchups` | 13 |
-
-**Live endpoints** (`nba_api.live.nba.endpoints`): `scoreboard.ScoreBoard`, `boxscore.BoxScore`, `playbyplay.PlayByPlay`.
-
-**Limits to design around.**
-
-- Raw player coordinates are not public. Only tracking summaries are.
-- Tracking and hustle stats update after games, not live.
-- Defender distance is available as four buckets per player or team (0-2 ft, 2-4 ft, 4-6 ft, 6+ ft), not per shot.
-
-### 4.2 NCAA Division I men's basketball
-
-| Source | What it provides | Access | Limits and risks | Verified |
-| --- | --- | --- | --- | --- |
-| ESPN unofficial API | Scoreboard, game summary with box score and play-by-play, teams, rosters, rankings, standings. Shot locations in play-by-play for some games. | Free, no key | Unofficial. The college scoreboard truncates results unless `groups=50&limit=500` is passed. Play-by-play quality varies by game. | Yes: several guides |
-| CollegeBasketballData.com API | Games, team and player stats, play-by-play by game, date, team, player, or tournament. Games back to 2003, team and player stats back to 2005. | Free API key | 1,000 calls per month on the free tier, more through a paid tier. Use date-level endpoints to stay under the limit. | Yes: package READMEs |
-| sportsdataverse packages (`hoopR` in R, `sportsdataverse` for Python and Node) | Bulk loaders for ESPN college play-by-play and box scores, plus recruiting data from 247Sports | Free | Python package coverage should be confirmed. | Partly |
-| Kaggle "March Machine Learning Mania" datasets | Historical results, seeds, and tournament brackets | Free with a Kaggle account | From general knowledge, not verified this session | No |
-| Bart Torvik (barttorvik.com) | Public team ratings, returning minutes, transfer data. Useful as a benchmark and for priors. | Free website | Terms of use and export options not verified | No |
-
-**ESPN endpoints** (replace `{league}` with `nba` or `mens-college-basketball`):
-
-```
-GET https://site.api.espn.com/apis/site/v2/sports/basketball/{league}/scoreboard?dates=YYYYMMDD
-GET https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=YYYYMMDD&groups=50&limit=500
-GET https://site.web.api.espn.com/apis/site/v2/sports/basketball/{league}/summary?event={eventId}
-GET https://site.api.espn.com/apis/v2/sports/basketball/{league}/standings
-```
-
-The `summary` response includes the box score and a `plays` array.
-
-### 4.3 Odds (benchmark only)
-
-Only closing moneyline, spread, and total are needed, once per game. No player props and no live odds.
-
-| Source | Free tier | Notes | Verified |
+| League and seasons | Team-level checks | Player box | Play-by-play |
 | --- | --- | --- | --- |
-| The Odds API | 500 credits per month | A call costs markets x regions credits. Historical calls cost 10 times as much. Three markets in one region once a day is about 90 credits a month per league. | Partly: third-party pricing comparisons |
-| OddsPapi | 250 requests per month | Advertises historical odds on the free tier, which would cover backtesting | Vendor claim only |
-| Others seen | PropLine, SharpAPI, SportsGameOdds | Free tiers advertised. Not needed unless the two above fall short. | Vendor claims only |
+| NBA 2016-17, 2017-18 | 8% and 16% fail (team box missing) | Same games | Fine |
+| NBA 2018-19 to 2025-26 | 0 of 200 fail | 0 of 200 | 1 of 200 |
+| College 2016-17 to 2025-26 | 0 of 250 fail | About 6% of games have player rows missing points | About 10% missing or incomplete |
 
-For backtesting on past seasons, historical closing lines are needed. Check the OddsPapi historical endpoint first, then public archives.
+**Decision:** both leagues load seasons from **2021-22** onward (after the bubble seasons), five seasons in total.
 
-### 4.4 Source priority by job
+### 4.4 Ingestion rules
 
-Updated in the design phase: ESPN is primary everywhere, because it is the only source confirmed to work from a server. The architecture phase confirms the fallbacks.
+1. Save every raw response to disk before parsing, keyed by endpoint, parameters, and fetch time.
+2. Rate-limit ESPN requests (about 1 to 2 per second at most) and retry with exponential backoff.
+3. Match records by ESPN IDs, so every job can be re-run without duplicates.
+4. For the NCAA, drop games where either team is not Division I.
+5. Order plays by their position in the `plays` array.
+6. Run the quality checks (section 8) on every game as it is stored.
+7. Raw files for finished games are kept indefinitely (estimated about 2 GB). From V2, live polling files are deleted after 7 days.
 
-| Job | NBA primary | NBA fallback | NCAA primary | NCAA fallback |
-| --- | --- | --- | --- | --- |
-| Historical games and box scores | ESPN (2016-17 onward) | `nba_api.stats` if reachable | ESPN | CollegeBasketballData, sportsdataverse |
-| Historical play-by-play | ESPN | `nba_api.stats` if reachable | ESPN | sportsdataverse, CollegeBasketballData |
-| Live scores and play-by-play | ESPN | `nba_api.live` if reachable | ESPN | None |
-| Live win probability benchmark | ESPN `winprobability` | None | ESPN, if present | None |
-| Injuries | ESPN injury statuses | `nbainjuries` if reachable | Manual entry (admin page) | None |
-| Betting lines (benchmark) | ESPN `pickcenter` | The Odds API | ESPN `pickcenter` | The Odds API |
-| Tracking, matchups, defender distance | `nba_api.stats` if reachable | None (feature dropped or ESPN version) | Not applicable | Not applicable |
+## 5. System components
 
-### 4.5 Ingestion rules
-
-1. Save every raw response to the raw store before parsing, keyed by source, endpoint, parameters, and fetch time.
-2. Rate-limit per source: 1 request every 1 to 3 seconds for stats.nba.com, and track monthly quotas for keyed APIs.
-3. Retry with backoff. On repeated failure, switch to the fallback source and log it.
-4. Map every source's team, player, and game IDs to internal IDs in a crosswalk table.
-5. All ingestion runs on the VPS. If NBA.com blocks the VPS, the NBA.com-only features are dropped; there is no home-machine fallback.
-6. For the NCAA, drop games where either team is not Division I before writing to the database.
-7. Order play-by-play by its position in the source's list, not by the source's sequence number.
-
-### 4.6 Checks for the architecture phase
-
-Done in design (see 4.0): ESPN summaries for one NBA and one NCAA game, with the `plays` array present.
-
-Still to run, from the VPS:
-
-1. Pull one finished NBA game through `nba_api.stats` and the live scoreboard through `nba_api.live`. Decides features 13, 14 (tracking version), and defender distance in 10.
-2. Pull ESPN's live summary during a preseason game and measure the delay against a broadcast.
-3. Check whether ESPN's `pickcenter` lines for past games are closing lines.
-4. Check ESPN's NCAA `winprobability` coverage and how far back ESPN's college box scores and play-by-play go.
-5. Check how to identify Division I teams in ESPN data, and the NCAA's official leaderboard minimums.
-6. Check whether ESPN play-by-play substitution events are complete enough for lineups and player impact (features 11 and 12).
-7. Check whether the NET ranking can be read reliably from the NCAA's site (feature 16).
-
-## 5. League abstraction
-
-Each league implements one adapter. Everything above the adapter is league-agnostic.
-
-```python
-class LeagueAdapter(Protocol):
-    league: str                                  # "nba" | "ncaam"
-    rules: LeagueRules                           # periods, period length, shot clock, bonus rules
-    capabilities: set[str]                       # e.g. {"live_pbp", "injury_feed", "tracking", "lineups"}
-
-    def schedule(self, season: str) -> list[Game]: ...
-    def box_score(self, game_id: str) -> BoxScore: ...
-    def play_by_play(self, game_id: str) -> list[Play]: ...
-    def live_games(self) -> list[LiveGame]: ...
-    def live_play_by_play(self, game_id: str, since: int) -> list[Play]: ...
-    def rosters(self, season: str) -> list[RosterEntry]: ...
+```
+                    ESPN (only data source)
+                            |
+               +------------v-------------+
+               |  WORKER (low priority)   |
+               |  scheduler + jobs        |
+               +--+--------------+--------+
+       raw files  |              |  clean data, ratings, predictions
+                  v              v
+          /data/raw (disk)   POSTGRES --NOTIFY--+   (V2: live updates)
+                                 |              |
+                                 v              v
+                            API (FastAPI) -- server-sent events (V2)
+                                 |
+                  App Caddy on 127.0.0.1:8080 (website files + /api)
+                                 |
+                 Owner's existing Caddy (HTTPS, hoops.<domain>)
+                                 |
+                              Browsers
 ```
 
-**Capability matrix.**
+**Services (one Quadlet unit each):** `postgres`, `api`, `worker`, `web` (the app's internal Caddy).
 
-| Capability | NBA | NCAA |
-| --- | --- | --- |
-| Box scores, play-by-play | Yes (ESPN) | Yes (ESPN) |
-| Live play-by-play | Yes | Partial |
-| Live win probability benchmark (ESPN) | Yes | To be checked |
-| Injury feed | Yes (ESPN statuses) | No (manual) |
-| Substitutions reliable enough for lineups | To be checked on ESPN data | Partial |
-| Tracking summaries, defender distance, matchups | Only if `nba_api` reaches NBA.com from the VPS | No |
-| Tournament bracket and seeds | No | Yes |
-
-Features check the matrix at runtime. A feature that lacks its capability is hidden for that league.
-
-## 6. Data model
-
-Postgres tables, grouped. Every table carries `league` and `season`.
-
-**Reference**
-
-- `teams`, `players`, `games`, `rosters`
-- `id_crosswalk` (internal ID to each source's ID)
-
-**Game data**
-
-- `team_game_stats`, `player_game_stats`
-- `plays` (one row per play-by-play event, normalized event types)
-- `possessions` (derived from plays)
-- `stints` (derived: a stretch with the same ten players on the floor)
-- `injuries` (snapshot time, player, status, reason)
-- `closing_lines` (moneyline, spread, total, source, captured time)
-
-**Model outputs**
-
-- `team_ratings` (date, team, overall, offense, defense, standard errors, model version)
-- `team_sub_ratings` (date, team, metric, value, percentile)
-- `predictions` (game, created time, win probability, margin, total, inputs hash, model version). Append-only.
-- `prediction_grades` (prediction, result, log loss, Brier score, margin error, market probability)
-- `live_win_prob` (game, event sequence, time, probability)
-- `insights` (game, time, type, payload, text)
-- `sim_runs`, `sim_team_results` (date, team, outcome, probability)
-- `player_projections` (date, player, scope: season or game, stat, mean, low, high)
-
-**NBA add-on outputs**
-
-- `shot_quality` (team or player, expected points per shot, actual, difference)
-- `player_impact` (date, player, offense, defense, standard errors)
-- `lineup_stats`, `matchup_stats`, `tracking_stats`
-
-**NCAA add-on outputs**
-
-- `field_projection` (date, team, bid probability, projected seed)
-- `brackets` (the announced bracket structure), `bracket_sim_results` (team, round, probability)
-- `manual_absences` (game, player, entered by)
-
-(`roster_priors` was removed with feature 15. The player-based starting point for team ratings is stored with team ratings.)
-
-## 7. Models
-
-Each model has a version string. Outputs record the version that produced them.
-
-### 7.1 Core
-
-| # | Model | Method | Inputs | Output |
-| --- | --- | --- | --- | --- |
-| 1 | Team ratings | Ridge regression on per-game offensive and defensive efficiency with team, opponent, and home-court terms, refit every time a game finishes, with recency weighting. Garbage time removed or down-weighted. High-luck components (opponent 3-point and free-throw percentage) regressed toward the mean. Preseason prior as pseudo-observations that decay with games played. V1 prior: box-score player values from last season, applied to current rosters by expected minutes, with last season's rating regressed about one third toward average as a fallback. V3 prior: player impact ratings. Standard errors from the regression or a bootstrap. | `team_game_stats`, `player_game_stats`, rosters | Overall, offense, defense with uncertainty |
-| 1 | Sub-ratings | The same opponent-adjusted regression, run per metric: effective field goal %, 3-point % and attempt rate, turnover %, opponent turnover % and steal %, offensive rebound %, defensive rebound %, free-throw rate, opponent 2-point %, and pace | `team_game_stats` | Value and percentile per metric |
-| 2 | Game predictor | Expected possessions from both teams' pace. Expected points from offense against defense. Adjust for home court, rest, travel, and availability. Win probability from a normal distribution on margin, with the spread of results fitted per league. Optional gradient-boosted layer on top once the baseline is graded. | Ratings, schedule, injuries, add-ons | Win probability, margin, total, ranges |
-| 3 | Matchup explainer | For each sub-rating pair (offense strength against the opposing defense), convert the gap to expected points and rank | Sub-ratings | Ranked list of mismatches with text |
-| 4 | Live win probability | Logistic regression or gradient boosting on score difference, time remaining, possession, pregame win probability, and foul and bonus state. Trained on historical play-by-play. Calibrated. One model per league. | `plays`, pregame prediction | Probability per event |
-| 5 | Insight detectors | Rule-based detectors: scoring runs, shooting far from expectation (binomial test against season rate), lineup scoring margin within a stint, foul trouble, large win probability swings. Text from templates. Ranking and rate limits so the feed stays readable. | Live state | Insight cards |
-| 6 | Season simulator | Monte Carlo, 10,000 runs, re-run every time a game finishes. Each run samples team ratings from their uncertainty, then samples each remaining game. League-specific rules: NBA play-in and tiebreakers; NCAA conference regular-season titles and tournament bids (no conference tournaments). | Ratings, schedule | Odds per team and outcome, with history |
-| 7 | Player projections | Per-minute rates with empirical Bayes shrinkage toward a prior by position, age or class year, and role. Separate minutes model. Similar players by nearest neighbors on standardized features. | `player_game_stats` | Season projection with ranges |
-| 8 | Evaluation | Log loss, Brier score, calibration curve, mean absolute error on margin and total. Market probabilities from closing lines with the bookmaker margin removed. Ablation runs with each add-on switched off. | `predictions`, results, `closing_lines` | Report card |
-
-### 7.2 NBA add-ons
-
-| # | Model | Method |
-| --- | --- | --- |
-| 9 | Single-game player projections | Minutes projection (role, injuries, blowout risk from the predicted margin) times per-minute rates, adjusted for opponent sub-ratings and pace. Ranges from the historical spread of outcomes at that minutes level. |
-| 10 | Shot quality | Expected points per shot by court zone from `shotchartdetail`, adjusted by defender-distance bucket mix at player and team level. Shot-making over expected is actual minus expected. Feeds the game predictor as a regression-to-expectation term. |
-| 11 | Player impact | Regularized adjusted plus-minus: ridge regression over stints, multiple seasons with recency weights, with a box-score-based prior. |
-| 12 | Lineup analysis | Aggregate stints by lineup and by two- and three-player combinations. Blend observed margin with the sum of player impact ratings, weighted by possessions. |
-| 13 | Defensive matchups | Aggregate matchup possessions by scorer and defender. Likely matchup from recent starters and position. |
-| 14 | Tracking profiles | Percentiles of tracking and hustle summaries by position group. |
-
-**Availability adjustment in the game predictor (NBA).** Only players with ESPN status "Out" count. For each one, subtract his value weighted by expected minutes, then add back the value of the players who absorb those minutes. Until V3 the value is the box-score player value; from V3 it is the impact rating.
-
-### 7.3 NCAA add-ons
-
-Features 15 (roster turnover priors) and 18 (bracket builder) were cut in design. The NCAA preseason starting point uses the same player-based method as model 1.
-
-| # | Model | Method |
-| --- | --- | --- |
-| 16 | Tournament field projection | Classifier for at-large selection and an ordinal model for seed, trained on past selections, using record, wins by opponent tier, and rating. Automatic bids come from simulated conference tournaments. |
-| 17 | Bracket simulator | The season simulator's engine at neutral sites over the bracket tree. Likely upsets are games where the model's probability for the lower seed exceeds the historical rate for that seed pairing by a set margin. |
-
-**Availability adjustment (NCAA).** No impact ratings. Scale the team's rating by the absent player's share of minutes and production, from a hand-entered absence.
-
-### 7.4 Training and evaluation protocol
-
-1. Train on past seasons only. Evaluate walk-forward: predict each game using only data available before it.
-2. Tune the small-sample behavior by scoring only the first 5 to 15 games of NBA seasons. This approximates college conditions.
-3. A change ships only if it improves walk-forward log loss.
-4. Compare against two baselines: home team always wins, and the closing line.
-
-## 8. Live pipeline
-
-1. A scheduler starts a poller for each game shortly before tip-off.
-2. The poller requests live play-by-play every 5 to 10 seconds and keeps the last event sequence it has seen.
-3. New events are normalized by the league adapter and appended to `plays`.
-4. Game state in Redis is updated: score, clock, possession, fouls, players on the floor, running box score.
-5. The live win probability model scores the new state. ESPN's own win probability for the same game is fetched and stored next to ours as a benchmark.
-6. Insight detectors run on the new state and may emit cards.
-7. The new probability and any cards are published to a Redis channel for that game and written to Postgres.
-8. The API server forwards channel messages to subscribed clients over WebSocket or server-sent events.
-9. At the final whistle, the poller stops, the game is marked final, and the nightly batch re-pulls the official play-by-play to correct any live errors.
-
-**Load.** An NBA night has at most 15 games. A busy college Saturday has more than 100. For NCAA, poll the scoreboard for all games, and poll play-by-play only for games that a user has open or that are flagged as featured.
-
-## 9. Batch schedule
+**Worker jobs:**
 
 | Job | When | Does |
 | --- | --- | --- |
-| Schedule sync | Daily, morning | Updates games and tip-off times |
-| Injury sync (NBA) | Every 15 minutes on game days | Pulls the injury report, re-runs affected predictions as new rows |
-| Pregame predictions | On schedule sync, on injury change, and locked 30 minutes before tip-off | Writes `predictions` |
-| Betting lines | Once per game, close to tip-off, from ESPN | Writes `closing_lines` (benchmark only) |
-| Game-final update | Within minutes of each game going final | Box score and play-by-play, team ratings, grading, season simulator |
-| Post-game corrections | Nightly | Re-pulls official box scores and play-by-play, derives possessions and stints, refits player models and add-ons |
-| Field projection and bracket simulator | Daily (NCAA) | Writes `field_projection`, `bracket_sim_results` |
-| Tracking refresh (NBA) | Nightly | Tracking, hustle, matchup, defender-distance summaries |
+| Schedule sync | Every morning, then every 3 hours | Scoreboards for the past 2 and next 7 days: new games, time changes, postponements |
+| Injury sync | Every 15 minutes on game days | ESPN injury statuses. A change in "Out" players writes a new, unlocked prediction. |
+| Game watcher | Every minute while any game is near tip-off or live | 30 minutes before tip-off: lock the prediction and record the betting line. On final: store the box score and plays, run quality checks, refit ratings, grade the prediction, refresh upcoming predictions and the precomputed stat tables. From V3 also re-run the season simulator. |
+| Overnight corrections | Nightly, about 4 AM Eastern | Re-pull the previous day's games, refit player models, rebuild derived tables |
+| Live poller (V2) | Every ~10 seconds per live game | Live state, both win probability lines, insight cards, NOTIFY to the API |
+| Backfill, backtests, rolling exams | Run by hand | Load past seasons, evaluate candidate models |
 
-## 10. Application API
+**Cross-cutting rules:**
+- Every job run is logged in `job_runs` (start, end, status, error). The API exposes the last successful update; the website shows "Data delayed, last updated …" when it is stale.
+- Times are stored in UTC and shown in the viewer's local time zone.
+- Heavy jobs run at low CPU priority so the website stays responsive.
 
-REST, read-only for fans. `{league}` is `nba` or `ncaam`. Team and player endpoints take a `season` parameter for the season picker. The table below predates the design phase's screen changes (Teams and Players tables, team page tabs, Compare moved to a later version); the architecture phase should revise it against feature spec section 6.
+**Memory budget at peak:** Postgres about 1 GB, API about 0.3 GB, worker 1 to 2 GB while fitting models, internal Caddy about 50 MB. Total about 2.5 to 3.5 GB.
 
-| Method and path | Returns | Features |
+## 6. League abstraction
+
+One ESPN client, parameterized by league, behind a small interface. League rules (periods, period length, overtime length, shot clock, garbage-time window) and a capability matrix live in one module.
+
+| Capability | NBA | NCAA |
 | --- | --- | --- |
-| `GET /{league}/games?date=` | Games with locked predictions | 2 |
-| `GET /{league}/games/{id}` | Game detail: prediction, explainer, absences, final result | 2, 3 |
-| `GET /{league}/games/{id}/win-probability` | Full win probability series | 4 |
-| `GET /{league}/games/{id}/insights` | Insight cards so far | 5 |
-| `WS /{league}/games/{id}/live` | Stream of state, probability, and cards | 4, 5 |
-| `GET /{league}/ratings?date=` | Ratings table with sub-ratings | 1 |
-| `GET /{league}/teams/{id}` | Team page data | 1, 6, 12 |
-| `GET /{league}/players/{id}` | Player page data | 7, 9, 11, 13, 14 |
-| `GET /{league}/season/odds` | Simulator results | 6 |
-| `GET /{league}/report-card` | Accuracy, calibration, comparison with the market | 8 |
-| `GET /nba/games/{id}/projections` | Single-game player projections | 9 |
-| `GET /nba/shot-quality?scope=team\|player` | Shot quality and shot-making over expected | 10 |
-| `GET /nba/teams/{id}/lineups` | Lineup analysis | 12 |
-| `GET /ncaam/field` | Tournament field projection | 16 |
-| `GET /ncaam/bracket/odds` | Round-by-round odds and likely upsets | 17 |
-| `POST /ncaam/games/{id}/absences` | Hand-entered absence (owner only) | 2 |
+| Box scores, play-by-play | Yes | Yes (player rows and plays occasionally incomplete) |
+| Live play-by-play | Yes | Partial |
+| ESPN live win probability | Yes | Yes, from about 2017-18 |
+| Injury feed | ESPN statuses | No (manual entry, V1.1 admin) |
+| Substitutions reliable enough for lineups | Yes | Recent seasons only; lineups not planned |
+| Tracking, defender distance, matchups | No (NBA.com out of scope) | No |
+| Tournament bracket and seeds | No | Yes |
 
-## 11. Suggested repository layout
+Features check the matrix and hide themselves when a capability is missing.
+
+## 7. Data model
+
+Postgres. ESPN IDs are stored directly on teams, players, and games (no crosswalk table; ESPN is the only source).
+
+| Group | Tables | Notes |
+| --- | --- | --- |
+| Reference | `teams`, `team_seasons`, `players`, `roster_entries` | `team_seasons` holds each team's conference per season (college realignment). Logo and headshot links from ESPN. |
+| Game data | `games`, `team_game_stats`, `player_game_stats`, `plays`, `injury_snapshots`, `betting_lines` | `games` holds the Division I flag, quality status per check, and exclusion reason. `betting_lines` records the line kind: captured by us before tip-off, ESPN labeled close, or timing uncertain. |
+| Model outputs | `player_values`, `team_ratings`, `team_sub_ratings`, `predictions`, `prediction_grades` | Full rating history for trend charts. `predictions` is append-only (a database trigger rejects updates and deletes) with a locked flag. Every output records its model version. |
+| Model management | `model_versions`, `training_runs`, `exam_results` | Each model version's settings and role (champion, challenger from V1.1), each training run, and each rolling exam result per candidate. Feeds the admin panel. |
+| Precomputed for screens | `team_season_stats`, `player_season_stats` | Refreshed whenever a game goes final. Traded players get one row per team plus a combined row. |
+| Operations | `job_runs`, `data_quality_issues` | Data freshness, job history, quality reports |
+
+**Added in later versions:** `player_projections`, admin login, `manual_absences`, shadow predictions (V1.1); `live_states`, `live_win_prob` (ours and ESPN's), `insights` (V2); `player_impact`, `lineup_stats`, `shot_quality`, `play_style`, `sim_runs`, `sim_results` (V3); `field_projection`, `brackets`, `bracket_sim_results` (V5).
+
+## 8. Data quality gate
+
+Every game is checked when stored. There are three groups, and each one gates only what depends on it:
+
+| Group | Checks | If a game fails |
+| --- | --- | --- |
+| Team-level | Team box score present; team box points (2 × FGM + 3PM + FTM) equal the final score | Excluded from ratings, predictions, and backtests. Still shown on the site. |
+| Player box | Player points add up to team points | Excluded from player averages and player values. Team data still used. |
+| Play-by-play | Plays present; scoring plays add up to the final score; game clock never runs backward within a period; (where substitutions exist) five players on the floor per team | Garbage-time removal falls back to the whole game. Excluded from win probability training and lineup data. |
+
+Each season gets a quality report per group. If more than 2% of a season's games fail a group, the owner is told before that data is used. College player box and play-by-play are expected to exceed 2%; the gate above handles that.
+
+## 9. Models
+
+Every model has a version string, and outputs record the version that produced them.
+
+### 9.1 V1 models
+
+| Model | Method |
+| --- | --- |
+| Player box-score values | Learn from past seasons how box-score rates per 100 possessions (shooting efficiency, assists, rebounds, turnovers, steals, blocks) relate to team scoring margin. Score every player with those weights, shrunk toward average by minutes played. Rookies and players without history get a modest below-average default. |
+| Team starting rating | Sum of current players' values weighted by expected minutes share. Fallback: last season's rating pulled about one third toward average. |
+| Team ratings | Each game gives two observations (each offense against the other defense). Points per 100 possessions = league average + offense strength − opposing defense strength + home court. Fit by ridge regression, refit after every final. The starting rating acts as pseudo-games that fade as real games accumulate. Recent games weighted more. Home-court advantage estimated per season. Garbage time removed: a lead of 25+ points in the last 6 minutes, or 15+ in the last 3 (fourth quarter in the NBA, second half in college). Opponent 3-point and free-throw percentage regressed toward normal before computing points allowed. Ranges from the fit's uncertainty. |
+| Sub-ratings | The same opponent-adjusted fit, run per metric |
+| Game predictor | Expected possessions from both teams' pace; expected points from offense against defense; adjustments for home court, rest, travel distance, and "Out" players (box-score values until V3). Win probability from the expected margin and the spread of real results around predictions (fitted; about 12 points in the NBA), widened when ratings are uncertain. Locked 30 minutes before tip-off. |
+| Matchup explainer | Rule: compare each offense skill with the opposing defense skill, convert the gap to points, show the top two or three. |
+
+### 9.2 Evaluation protocol
+
+- **Walk-forward:** every prediction in a backtest uses only games before that day.
+- **Seasons:** 2021-22 is a warm-up season (it provides player values and starting ratings). 2022-23 through 2025-26 are scored.
+- **Rolling exams:**
+
+  | Round | Candidates compete on | Winner examined on |
+  | --- | --- | --- |
+  | 1 | 2022-23 | 2023-24 |
+  | 2 | 2022-23 to 2023-24 | 2024-25 |
+  | 3 | 2022-23 to 2024-25 | 2025-26 |
+
+- **Candidates:** each round runs about 20 to 50 candidate methods (recency weighting, starting-rating strength, luck discounting, home-court handling, and similar settings). The winner is chosen using the tuning seasons only, never the exam. Ties within noise go to the simpler method. A blend of the top three is tested as an extra candidate and used if it wins.
+- **Score:** the average across the three exams. A change is kept only if it improves that average.
+- **Final model:** tuned on all four scored seasons and used live. The live season is the fresh exam.
+- **Metrics:** log loss, Brier score, accuracy, calibration, mean absolute error on margin and total.
+- **Benchmarks:** the naive baseline (home team favored at its historical win rate), the model without the roster starting point, and the betting market (bookmaker margin removed).
+- **Accuracy target:** over a season, within 1.5 percentage points of the market's accuracy and within 0.01 of its log loss, and clearly better than the naive baseline. The app launches regardless; the report card and admin panel show the gap.
+- **Sanity check:** final-season ratings broadly agree with public ratings such as ESPN's BPI.
+- **Shadow models (V1.1):** the champion makes public predictions; a few challengers predict every game quietly and are graded. At fixed checkpoints (for example monthly), a challenger replaces the champion only if it has been clearly better. Switches are noted on the report card.
+
+### 9.3 Later versions
+
+| Version | Model | Method |
+| --- | --- | --- |
+| V1.1 | Single-game player projections | Minutes model times per-minute rates, shrunk toward average for small samples, adjusted for opponent, pace, rest, and absent teammates |
+| V2 | Live win probability | Trained on past play-by-play: score difference, time remaining, possession, pregame win probability, foul and bonus state. Calibrated. One model per league. |
+| V2 | Insight detectors | Rules with significance thresholds; developing events update their card in place |
+| V3 | Player impact | Regularized adjusted plus-minus over stints, with a box-score prior. Replaces box-score values in starting ratings and absences. |
+| V3 | Shot quality | Expected points by court zone and shot type from ESPN play-by-play; free throws excluded |
+| V3 | Lineups, play style | Stints aggregated by lineup and pairings; play-style percentiles from shot locations and types |
+| V3, V4 | Season simulator | 10,000 Monte Carlo runs, re-run after every final. NBA play-in and tiebreakers; NCAA conference regular-season titles and bids. |
+| V5 | Field projection, bracket simulator | Selection and seeding model trained on past selections (older selection history may be loaded for this model only); bracket simulation at neutral sites with likely upsets |
+
+## 10. Live pipeline (V2)
+
+1. The worker starts a poller for each game shortly before tip-off.
+2. Every ~10 seconds it fetches the summary, takes plays after the last processed position, and normalizes them.
+3. Live state (score, clock, possession, fouls, players on the floor, running box score) is written to `live_states`.
+4. Our live win probability scores the new state. ESPN's win probability for the same moment is stored next to it.
+5. Insight detectors run and create or update cards.
+6. The worker sends a Postgres NOTIFY; the API forwards it to subscribed browsers over server-sent events.
+7. At final, the poller stops and the game-final job runs. The overnight job re-pulls the official data.
+
+The feed delay behind the broadcast is to be measured on a real game before V2 is built.
+
+## 11. API
+
+Read-only JSON under `/api`. `{league}` is `nba` or `ncaam`. Team and player endpoints take `season`.
+
+| Endpoint | Feeds | Version |
+| --- | --- | --- |
+| `GET /api/{league}/meta` | Seasons, conferences, last successful data update | V1 |
+| `GET /api/{league}/games?date=&tz=` | Tonight | V1 |
+| `GET /api/{league}/games/{id}` | Game page | V1 |
+| `GET /api/{league}/teams?season=` | Teams table | V1 |
+| `GET /api/{league}/teams/{id}?season=` | Team page | V1 |
+| `GET /api/{league}/players?season=&scope=&team=&conf=` | Players table | V1 |
+| `GET /api/{league}/players/{id}?season=` | Player page | V1 |
+| `GET /api/{league}/search/teams?q=`, `/search/players?q=` | Typo-tolerant search (`pg_trgm`) | V1 |
+| `GET /api/{league}/report-card?season=` | Report card, including backtests | V1 |
+| `GET /api/nba/games/{id}/projections` | Player projections, projected vs. actual | V1.1 |
+| `/api/admin/*` | Admin panel (login, data health, model management, NCAA absences) | V1.1 |
+| `GET /api/{league}/games/{id}/live` | Server-sent events: state, win probability (ours and ESPN's), insight cards | V2 |
+| `GET /api/{league}/season/odds` | Season simulator | V3 |
+| `GET /api/ncaam/march/*` | Field projection, bracket odds, likely upsets | V5 |
+
+- Tables are sent whole for the chosen scope (up to about 5,000 college players, about 100 KB compressed) and sorted and filtered in the browser.
+- Responses are cached in memory and invalidated when data changes (a game going final, an injury update).
+
+## 12. Website
+
+- React + TypeScript single-page app, built with Vite into static files.
+- Screens and behavior as in feature spec section 6, including the approved wireframe.
+- Tables: TanStack Table for sorting, TanStack Virtual so only visible rows are drawn. Sticky name column and header on phones.
+- Dark mode by default. Times in the viewer's local time zone. Team logos and player headshots from ESPN image links.
+- **Performance budget** (mid-range phone): first load under 2 seconds on 4G; sorting or switching scope under 100 ms; smooth scrolling on the full Division I players table.
+
+## 13. Deployment and operations
+
+- **Code** lives in the owner's GitHub repository.
+- **Deploy:** the owner runs `./deploy.sh` on the VPS. It pulls the latest code, builds the images with Podman, applies database migrations, and restarts the services. Deploy never touches the owner's existing services.
+- **Secrets and settings:** a `.env` file on the VPS, never committed.
+- **Services:** Quadlet units for `postgres`, `api`, `worker`, and `web`. Only `web` is reachable, on `127.0.0.1:8080`.
+- **Public access:** the owner's existing Caddy (probably in a container) serves `hoops.<owner's domain>` with HTTPS and forwards to the app. If that Caddy runs in a container, it reaches the app through a shared Podman network or the host address rather than `127.0.0.1`; confirm with `podman ps` at deploy time. The owner adds a DNS record for the subdomain.
+- **Admin panel (V1.1):** view only. Shows models (versions, settings, champion and challengers), rolling exam results, live accuracy against the target, training and job history, and data quality reports. Training runs and exam results are recorded from V1, so the history is complete. Actions (start a backtest, promote a challenger, re-run a job) come later.
+- **Monitoring:** the "data delayed" note on the site, and the admin panel from V1.1. No email or phone alerts at launch.
+- **Backups:** none at launch, by decision. To be revisited. Note: locked prediction history cannot be recreated from ESPN.
+
+## 14. Testing strategy
+
+| Layer | What is tested | How |
+| --- | --- | --- |
+| Parsing | ESPN responses parse correctly, including every known quirk (section 4.2) | Saved real ESPN responses as test fixtures |
+| Rules | Division I filter, garbage time, 30-minute lock, "Out only" injury rule, which games count | Small hand-made cases |
+| Math | Ratings recover known strengths from simulated seasons; probabilities and ranges are sensible | Simulated data |
+| Database | Predictions cannot be edited or deleted; re-running jobs never duplicates | Real Postgres in tests |
+| Full data check | Quality gate on every game of every loaded season; the 2% report | After the backfill |
+| Models | Rolling exam results against the accuracy target; sanity check against public ratings | Backtest reports |
+| API | Correct data and response times for every endpoint | Automated tests |
+| Website | Simple Playwright click-through tests at phone and desktop sizes, plus the performance budget. The owner tests manually beyond that. | Playwright |
+| Dress rehearsal | The full system on real NBA preseason games on the VPS: schedule sync, lock, game final, ratings update, report card, and a simulated ESPN outage | VPS, before opening night |
+
+GitHub Actions runs lint and tests on every push.
+
+## 15. Repository layout
 
 ```
-/ingest
-  /adapters      nba.py, ncaam.py, espn.py, cbbd.py, odds.py, injuries.py
-  /jobs          schedule_sync.py, postgame.py, injuries.py, closing_lines.py
-  live_poller.py
-/core
-  schema/        SQL migrations
-  derive/        possessions.py, stints.py
-/models
-  ratings.py  sub_ratings.py  game_predictor.py  live_wp.py
-  insights/     detectors
-  simulate.py   players.py    evaluate.py
-  /nba          projections.py, shot_quality.py, rapm.py, lineups.py, matchups.py, tracking.py
-  /ncaam        field.py, bracket_sim.py
-/api            FastAPI app, routers per section 10
-/web            Next.js client
-/notebooks      exploration and backtests
-/tests
-docker-compose.yml
+/backend
+  pyproject.toml
+  hoops/
+    leagues.py        league rules and capability matrix
+    espn/             client, raw store, parsing
+    quality/          data quality checks
+    db/               migrations, queries
+    models/           player_values, ratings, sub_ratings, predictor, explainer
+    evaluation/       walk-forward backtests, rolling exams, metrics
+    jobs/             scheduler and job definitions
+    api/              FastAPI app and routers
+  tests/
+/web                  React + Vite + TypeScript
+/deploy               Quadlet units, Containerfiles, internal Caddyfile, deploy.sh, .env.example
+/.github/workflows    CI
 ```
 
-## 12. Versions
+## 16. Versions
 
-Scope by version, from the feature spec (section 7). No dates. V1 targets the start of the NBA regular season. Each version goes through build, testing, and deploy.
+Scope by version, from feature spec section 7.
 
 | Version | Scope | Done when |
 | --- | --- | --- |
-| V1 | ESPN data pipeline on the VPS and backfill from 2016-17. Team ratings with roster-based starting point. Game predictor with ESPN injury statuses. Matchup explainer. Evaluation and past-season backtests. Screens: Tonight, game page (Preview, Box score, final result), Teams, team page, Players, player page (Overview, Game log), Report card. Season picker. | Friends can open the app on opening night, and walk-forward results exist for past seasons |
-| V1.1 | Single-game player projections, projected vs. actual, Admin page | Projections graded for real games |
-| V2 | Live poller, our live win probability and ESPN's, analyst feed, running box score, push to clients | Live game page works on a game night |
-| V3 | Player impact ratings (and roster-aware ratings and absences), shot quality, lineups, play-style profiles, defensive matchups if NBA.com is reachable, season simulator | Each add-on has an ablation result |
-| V4 | NCAA Division I adapter and backfill, ratings, predictor, core screens, ESPN live win probability line, season simulator, running and graded daily | Months of graded college predictions before March |
+| V1 | ESPN pipeline on the VPS; backfill 2021-22 onward for the NBA; quality gate; player values, team ratings, sub-ratings, game predictor, matchup explainer; rolling exams; screens: Tonight, game page (Preview, Box score, final result), Teams, team page, Players, player page (Overview, Game log), Report card; season picker | Friends can open the app on opening night; rolling exam results exist; dress rehearsal passed |
+| V1.1 | Player projections, projected vs. actual, admin panel (view only, with model management), shadow models | Projections graded for real games; admin panel shows training history |
+| V2 | Live poller, our and ESPN's win probability, analyst feed, running box score, server-sent events | Live game page works on a game night |
+| V3 | Player impact, shot quality, lineups, play style, season simulator | Each add-on has a rolling exam result |
+| V4 | NCAA Division I backfill from 2021-22, ratings, predictor, core screens, ESPN live win probability line, season simulator | College predictions graded daily well before March |
 | V5 | Field projection, bracket simulator with likely upsets, our NCAA live win probability | Ready when the bracket is announced |
-| Later | Compare screen, share links, sign-in if needed | |
+| Later | Compare screen, share links, admin actions, sign-in if needed, backups | |
 
-## 13. Risks
+## 17. Risks
 
 | Risk | Effect | Mitigation |
 | --- | --- | --- |
-| NBA.com blocks access from the VPS | Features 13, tracking 14, and defender distance in 10 are unavailable | ESPN is primary for everything else. Drop those features or use their ESPN-based versions. No home-machine fallback, by decision. |
-| ESPN changes its unofficial endpoints | NCAA live and fallback data fail | Adapter isolation, CollegeBasketballData for batch data, contract tests that run daily |
-| ESPN's past betting lines are not closing lines | The market comparison in backtests is less precise | Check in the architecture phase. Label the line type on the report card; fall back to grading against the market from launch onward only. |
-| College play-by-play is uneven | Live feed and lineup features are unreliable | Capability flags per game, degrade to score-only win probability |
-| Live feed delay | Insights arrive after the broadcast shows them | Measure the delay in the smoke tests, set expectations in the interface |
-| Overfitting to the NBA | The model does worse on college data | Early-season NBA tests, separate per-league fitting, two months of background grading on NCAA games |
-| Unofficial data and terms of use | Sources may restrict use | The app is an open link for a friend group, with no sign-in. Avoid publicizing it; add sign-in if it spreads. Review each source's terms before any public release. |
+| ESPN changes or removes its unofficial endpoints | Data stops | Raw responses stored; parsing isolated in one module; "data delayed" note; daily job failures visible in the admin panel |
+| ESPN rate-limits or blocks the VPS | Updates slow or stop | Polite request pacing; cached raw responses; backfill run once |
+| Data quirks beyond those found | Wrong numbers | Quality gate on every game; per-season reports |
+| Old betting lines are not closing lines | Backtest market comparison less precise | Label line kind; grade against our own captured lines from launch |
+| Only four scored seasons | Model choices are less certain | Few tuning settings, rolling exams, ties go to the simpler method, live season as the fresh exam |
+| VPS has 2 cores shared with other services | Slow site during heavy jobs | Low CPU priority for heavy jobs; precomputed tables; in-memory API cache |
+| No backups at launch | A disk failure loses locked prediction history | Revisit backups soon after launch |
+| Open link | The app could spread beyond the friend group | Do not publicize it; add sign-in if needed |
+| Live feed delay (V2) | Insights arrive after the broadcast | Measure before V2; set expectations in the interface |
 
-## 14. Open questions
+## 18. Open questions
 
-Answered in the design phase:
+1. App name (owner, any time).
+2. The exact ESPN injuries endpoint path (check during build).
+3. Live feed delay behind the broadcast (measure before V2).
+4. Whether the existing Caddy runs in a container, and how it reaches the app (check at deploy).
+5. Backups (revisit after launch).
+6. For V5: load older tournament selection history for the field projection model only?
 
-- Website or app: responsive website, dark mode by default.
-- Hosting: the owner's existing VPS. No home machine for ingestion.
-- Accounts: none. Open link; one admin login for the owner. Sign-in may be added later.
-- Data budget: free by default; paying needs a strong case.
-- Insight text: template-based.
-- NCAA absences: entered by the owner only, in the admin page.
+## 19. Sources
 
-Still open, for the architecture phase:
-
-1. Confirm the stack in section 3, or choose another.
-2. Does `nba_api` work from the VPS? (Section 4.6, check 1.)
-3. The remaining checks in section 4.6.
-4. App name (owner, any time before deploy).
-
-## 15. Sources checked on 2026-10-04
-
-- nba_api on PyPI: https://pypi.org/project/nba-api
-- nbainjuries on PyPI: https://pypi.org/project/nbainjuries/
-- nba-injury-report on PyPI: https://pypi.org/project/nba-injury-report/
-- NBA.com stats endpoints, headers, tracking and defender-distance data: https://www.mintlify.com/gabriel1200/site_Data/data-sources
+- ESPN site API behavior: checked directly on 2026-10-04 and 2026-10-05 (section 4.2 and 4.3).
 - ESPN unofficial API guides: https://zuplo.com/blog/2024/10/01/espn-hidden-api-guide and https://sportsapis.dev/espn-api
 - ESPN college scoreboard parameters: https://github.com/pseudo-r/public-espn-api
-- CollegeBasketballData API limits: https://github.com/CFBD/cbbd-r
-- CollegeBasketballData play-by-play endpoints (via hoopR): https://rdrr.io/cran/hoopR/src/R/cbbd_plays.R
-- sportsdataverse (Node) coverage: https://npmjs.com/package/sportsdataverse
-- The Odds API free tier and credit costs (third-party comparison): https://oddspapi.io/blog/?p=2498
-- 2026-27 NBA season dates: https://www.api-football.com/news/post/2026-2027-nba-season-guide-to-using-data-with-api-sports
-- NBA league leader minimums (checked 2026-10-05): https://www.nba.com/stats/help/statminimums
+- NBA league leader minimums: https://www.nba.com/stats/help/statminimums

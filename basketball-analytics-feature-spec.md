@@ -1,11 +1,11 @@
 # Basketball Analytics App: Feature Spec
 
-Last updated: 2026-10-05 (end of design phase)
+Last updated: 2026-10-05 (updated at the end of the architecture phase)
 Companion document: `basketball-analytics-technical-architecture.md`
 
 ## 1. Context for a new session
 
-This document records the product design. The design phase is complete. The next phase is architecture, then build, testing, and deploy. Do not skip phases.
+This document records the product design. The design phase is complete, and the architecture phase updated it with its decisions (features 10, 13, and 14, seasons loaded, shadow models, admin model management, accuracy target). The next phase is build, then testing and deploy. Do not skip phases.
 
 **What the app is.** A basketball prediction and analytics engine for fans who watch for fun. It is built on the NBA first, then extended to NCAA Division I men's basketball for March Madness.
 
@@ -30,7 +30,9 @@ This document records the product design. The design phase is complete. The next
 | Look | Dark mode by default. Times in the viewer's local time zone. Team logos and player headshots shown. |
 | Name | Not chosen yet. |
 | Rejected ideas | "Switch to this game" alerts, fantasy tools, a standalone prop-bet tracker, a standalone injury feature, a standalone schedule-strength feature, a standalone upset finder, natural-language stat questions, percentile color coding, advanced stat filters. |
-| Cut during design | Feature 15 (roster turnover priors) and feature 18 (bracket builder). See section 5.4. |
+| Cut | Feature 15 (roster turnover priors) and feature 18 (bracket builder) in design; feature 13 (defensive matchups) in architecture, because NBA.com data is out of scope. See section 5.4. |
+| Data source | ESPN only. NBA.com (`nba_api`) is out of scope. |
+| Seasons loaded | 2021-22 onward for both leagues (after the bubble seasons). |
 | Naming | Do not use the term "luck index". Use "shot-making over expected". Releases are called versions: V1, V1.1, V2, and so on. |
 
 **Still open.** See section 9.
@@ -40,13 +42,14 @@ This document records the product design. The design phase is complete. The next
 1. **The core runs on its own.** Add-ons feed in as optional inputs. The same game predictor works with or without them.
 2. **Small samples are expected.** Every rating starts from a prior estimate, is pulled toward the average until there is enough evidence, and shows an uncertainty range.
 3. **Every prediction is locked 30 minutes before tip-off and graded afterwards.** Only the locked prediction is graded. A card may show a newer number after a late change, labeled "updated after lock, not graded". Accuracy is public inside the app.
-4. **Each add-on must earn its place.** The NBA predictor is run with and without each add-on to measure what it contributes. A change to any model ships only if it improves accuracy on past seasons.
-5. **"Correct" is measured, not asserted.** Ratings and predictions are judged by how well they predict future games, how they compare with the betting market, and whether they broadly agree with established public ratings.
-6. **Data freshness is visible.** When a data source is late or down, screens say so ("Data delayed, last updated 7:42 PM") instead of quietly showing old numbers.
+4. **Each add-on must earn its place.** The NBA predictor is run with and without each add-on to measure what it contributes. A change to any model ships only if it improves accuracy in the rolling exams on past seasons (architecture doc, section 9.2).
+5. **Accuracy target.** Over a season, the game predictor should be within 1.5 percentage points of the betting market's accuracy and within 0.01 of its log loss, and clearly better than a naive baseline. The app launches regardless; the report card shows the gap.
+6. **"Correct" is measured, not asserted.** Ratings and predictions are judged by how well they predict future games, how they compare with the betting market, and whether they broadly agree with established public ratings.
+7. **Data freshness is visible.** When a data source is late or down, screens say so ("Data delayed, last updated 7:42 PM") instead of quietly showing old numbers.
 
 ## 3. Feature availability at a glance
 
-16 features: 8 core, 6 NBA add-ons, 2 NCAA add-ons. Features 15 and 18 were cut.
+15 features: 8 core, 5 NBA add-ons, 2 NCAA add-ons. Features 13, 15, and 18 were cut.
 
 | # | Feature | Group | NBA | NCAA | First version |
 | --- | --- | --- | --- | --- | --- |
@@ -59,11 +62,10 @@ This document records the product design. The design phase is complete. The next
 | 7 | Player profiles | Core | Full | Season-level only | V1 (NBA), V4 (NCAA) |
 | 8 | Model report card | Core | Full | Full | V1 (NBA), V4 (NCAA) |
 | 9 | Single-game player projections | NBA add-on | Yes | No | V1.1 |
-| 10 | Shot quality and shot-making over expected | NBA add-on | Yes (ESPN shot data; defender distance only if NBA.com works) | No | V3 |
+| 10 | Shot quality and shot-making over expected | NBA add-on | Yes (ESPN shot location and type; no defender distance) | No | V3 |
 | 11 | Player impact ratings | NBA add-on | Yes | No | V3 |
 | 12 | Lineup analysis | NBA add-on | Yes | No | V3 |
-| 13 | Defensive matchups | NBA add-on | Only if NBA.com data is reachable from the VPS | No | V3, conditional |
-| 14 | Play-style profiles | NBA add-on | Tracking data if NBA.com works, otherwise an ESPN-based version | No | V3 |
+| 14 | Play-style profiles | NBA add-on | Yes (ESPN-based) | No | V3 |
 | 16 | Tournament field projection | NCAA add-on | No | Yes | V5 |
 | 17 | Bracket simulator (includes likely upsets) | NCAA add-on | No | Yes | V5 |
 
@@ -113,10 +115,10 @@ This document records the product design. The design phase is complete. The next
 - **Flow:**
   1. The fan opens the Teams or Players table, sorts by the stat in question, and filters by position or conference.
   2. The fan opens team and player pages to see ratings, rosters, game logs, and trends, for this season or a past one.
-  3. For the NBA, the fan checks player impact ratings, lineups, play style, and matchups (from V3).
+  3. For the NBA, the fan checks player impact ratings, lineups, and play style (from V3).
   4. (Later version) The fan opens the Compare screen with two teams or two players side by side.
 - **Outcome:** the fan has specific numbers to share.
-- **Features used:** 1, 7, and for the NBA 11 to 14.
+- **Features used:** 1, 7, and for the NBA 11, 12, and 14.
 
 ### UC-5: Track a season
 
@@ -169,7 +171,7 @@ Every team gets an overall rating, an offensive and a defensive rating, and a se
 - **Sub-ratings:** shooting efficiency, three-point shooting, ball security, forcing turnovers and steals, offensive rebounding, defensive rebounding, getting to the free-throw line, interior defense, and pace. Each is shown as a league percentile.
 - **How it works:**
   - Ratings are recalculated every time a game finishes, from all of the season's games so far, with recent games counting more. They change throughout the season.
-  - Garbage time (blowout minutes played by benches) is removed or down-weighted.
+  - Garbage time is removed: a lead of 25 or more points in the last 6 minutes, or 15 or more in the last 3 (fourth quarter in the NBA, second half in college).
   - Mostly-luck components, such as opponent 3-point percentage and opponent free-throw percentage, are pulled toward normal instead of trusted fully.
   - The league average is recalculated daily, so ratings are always relative to the current season.
 - **Starting point (preseason):**
@@ -259,7 +261,7 @@ Each player's stat line for a game is predicted as a range.
 This feature measures how good a team's or player's shots are, and compares that with the actual results.
 
 - **What the user sees:** expected and actual points per shot, with a label for who is shooting above or below expectation and likely to drift back.
-- **How it works:** each field goal attempt gets an expected value from its location and shot type (for example pull-up jumper or driving layup), both from ESPN play-by-play. If NBA.com data is reachable from the VPS, defender distance is added. Free throws are not included, since they are not contested.
+- **How it works:** each field goal attempt gets an expected value from its location and shot type (for example pull-up jumper or driving layup), both from ESPN play-by-play. Defender distance is not available (NBA.com is out of scope). Free throws are not included, since they are not contested.
 - **Why NBA only:** the shot detail and sample sizes are reliable only for the NBA.
 
 #### 11. Player impact ratings
@@ -279,21 +281,13 @@ This feature shows which player combinations work.
 - **How it works:** substitutions in the play-by-play show who was on the floor for every possession. Lineups with few possessions are labeled "small sample" and blended with player impact ratings.
 - **Why NBA only:** college lineup data is incomplete and the samples are too small.
 
-#### 13. Defensive matchups (conditional)
-
-This feature shows who guards whom.
-
-- **What the user sees:** for any scorer, the defenders he has faced and how he shot against each, plus the likely matchup for the next game.
-- **How it works:** it uses the NBA's matchup data, which counts possessions for each defender and scorer pairing. Small samples are labeled.
-- **Condition:** this data exists only on NBA.com. If NBA.com cannot be reached from the VPS, this feature is cut. ESPN data cannot replace it.
-
 #### 14. Play-style profiles
 
 Player pages gain a play-style profile.
 
-- **If NBA.com is reachable:** tracking stats such as drives, touches, time with the ball, passes that lead to shots, distance run, deflections, and contested shots, each with a league percentile. Refreshed after each game; not available live.
-- **If not:** an ESPN-based profile built from shot locations and types: rim vs. midrange vs. three, drives vs. pull-ups, assisted vs. unassisted.
-- **Why NBA only:** college has no public tracking feed, and the samples are too small.
+- **What the user sees:** a profile built from ESPN shot locations and types: rim vs. midrange vs. three, drives vs. pull-ups, assisted vs. unassisted, each with a league percentile.
+- **Why not tracking data:** tracking stats exist only on NBA.com, which is out of scope.
+- **Why NBA only:** the samples are too small in college.
 
 ### 5.3 NCAA-only features
 
@@ -317,6 +311,7 @@ Once the bracket is set, the tournament is simulated thousands of times.
 
 - **15. Roster turnover priors.** Cut as a separate feature. The idea that a team is its players weighted by minutes is kept as the starting point of team ratings (feature 1). Recruiting rankings and coaching changes are not used.
 - **18. Bracket builder.** Cut. Fans use the bracket simulator's odds and fill out brackets on their pool's own site.
+- **13. Defensive matchups.** Cut in the architecture phase. The data exists only on NBA.com, which is out of scope, and ESPN data cannot replace it.
 
 ## 6. Screens
 
@@ -324,7 +319,7 @@ Once the bracket is set, the tournament is simulated thousands of times.
 
 **Tables everywhere** follow the conventions of current stat sites: tap a column header to sort, tap again to reverse. Player names and column headers stay fixed in place while scrolling sideways on a phone. No advanced filters and no percentile colors.
 
-**Season picker.** Teams, Players, the team page, and the player page have a season picker. NBA seasons go back to 2016-17, the first season with complete ESPN box scores. College depth is to be confirmed. Past seasons show that season's final ratings, rosters, and stats. A player traded mid-season has one row per team plus a combined total.
+**Season picker.** Teams, Players, the team page, and the player page have a season picker. Both leagues go back to 2021-22, the first season after the bubble seasons. Past seasons show that season's final ratings, rosters, and stats. A player traded mid-season has one row per team plus a combined total.
 
 A clickable wireframe of the Teams, team page, and Players screens was reviewed and approved during design: https://claude.ai/artifact/DmxRAwZpkDbB6aiLAyhvuZ
 
@@ -335,11 +330,11 @@ A clickable wireframe of the Teams, team page, and Players screens was reviewed 
 | Teams | All teams ranked by rating, with columns for rating with range, offense, defense, record, points per game, opponent points per game, pace, and conference. Team search. Scope: League, East, West (NBA); Division I, Conference (NCAA). | 1 | V1 |
 | Team page | Header: name, record, rating with range, league rank, and a quick team switcher (previous, next, dropdown). Tabs: **Overview** (ratings, sub-ratings profile, rating trend, season odds from V3), **Team Stats** (team and opponent per-game stats), **Roster** (every player; sorted by impact rating for the NBA and points per game for the NCAA; every column sortable; position filter), **Schedule** (past games with our prediction vs. the result, upcoming games with predictions), **Lineups** (NBA, V3). | 1, 6, 7, 11, 12 | V1 |
 | Players | The roster table for every player. Scope: Team, League (NBA); Team, Conference, Division I (NCAA). Player search, position filter, and a "Qualified only" switch using the official minimums. Default sort: impact rating (NBA, from V3; points per game before that) or points per game (NCAA). | 7, 11 | V1 |
-| Player page | Header: name, team, position, height, age or class year, and a key stat line. Tabs: **Overview** (season averages, recent form chart, rest-of-season projection, similar players by playing style), **Game log** (one row per game; projected vs. actual from V1.1), **Impact** (NBA, V3), **Shooting** (NBA, V3), **Play style** (NBA, V3), **Matchups** (NBA, V3, conditional). No teammate switcher. | 7, 9, 10, 11, 13, 14 | V1 |
+| Player page | Header: name, team, position, height, age or class year, and a key stat line. Tabs: **Overview** (season averages, recent form chart, rest-of-season projection, similar players by playing style), **Game log** (one row per game; projected vs. actual from V1.1), **Impact** (NBA, V3), **Shooting** (NBA, V3), **Play style** (NBA, V3). No teammate switcher. | 7, 9, 10, 11, 14 | V1 |
 | Season | Projected record and odds for every team, recalculated every time a game finishes, with a chart of how a team's odds moved. | 6 | V3 (NBA), V4 (NCAA) |
 | Report card | Graded predictions, accuracy by month, calibration, comparison with the market, past-season backtests, early vs. late season split. | 8 | V1 |
 | March (NCAA) | Field projection, bracket odds, likely upsets. | 16, 17 | V5 |
-| Admin | Owner login. NCAA absences entry, and a data-health view (last successful data pull, failed jobs). | 2 | V1.1 |
+| Admin | Owner login, view only at first. NCAA absences entry. Data health (last successful data pull, job history, data quality reports). Model management: model versions and settings, champion and challengers, rolling exam results, live accuracy against the target, training history. | 2, 8 | V1.1 (actions such as starting a backtest or promoting a challenger come later) |
 | Compare | Two teams or two players side by side, with the better value in each row highlighted. | 1, 7 | Later |
 
 **Search.** Separate searches for teams (on Teams) and players (on Players). Results appear as you type. Search tolerates typos, nicknames, abbreviations, and city names.
@@ -355,26 +350,25 @@ Scope of work by version. No dates; V1 targets the start of the NBA regular seas
 | Version | Scope |
 | --- | --- |
 | **V1** | ESPN data pipeline on the VPS. Team ratings with sub-ratings, ranges, and the roster-based starting point. Game predictor with ESPN injury statuses, locked before tip-off. Matchup explainer. Tonight. Game page (Preview, Box score, final result vs. prediction). Teams, team page, Players, player page (Overview, Game log). Season picker. Report card with past-season backtests. |
-| **V1.1** | Single-game player projections (feature 9), projected vs. actual on the game page and player game log, Admin page. |
+| **V1.1** | Single-game player projections (feature 9), projected vs. actual on the game page and player game log, Admin page (view only, with model management), shadow models (challengers predict every game quietly; a challenger replaces the champion at fixed checkpoints only if clearly better). |
 | **V2** | Live: our win probability and ESPN's side by side, analyst feed, running box score, live cards on Tonight. |
-| **V3** | NBA add-ons: player impact ratings (and roster-aware ratings and absences built on them), shot quality, lineups, play-style profiles, defensive matchups if NBA.com is reachable. Season simulator. |
+| **V3** | NBA add-ons: player impact ratings (and roster-aware ratings and absences built on them), shot quality, lineups, play-style profiles. Season simulator. |
 | **V4** | NCAA core for Division I: data, ratings, predictions, all core screens, ESPN's live win probability line, season simulator, graded daily. |
 | **V5** | March: tournament field projection, bracket simulator with likely upsets, our NCAA live win probability. |
-| **Later** | Compare screen, share links with preview images, sign-in if needed. |
+| **Later** | Compare screen, share links with preview images, admin actions, sign-in if needed, backups. |
 
-## 8. Data constraints found during design
+## 8. Data constraints
 
-From checks run on 2026-10-04. The architecture phase should confirm each one.
+From checks during design and architecture. Details are in the architecture doc, sections 4.2 and 4.3.
 
-- **ESPN works** from a cloud server for both leagues: scoreboard, box scores, play-by-play with shot locations, injuries, betting lines, and ESPN's own win probability (seen in NBA data; college not checked).
-- **ESPN history:** NBA play-by-play back to at least 2015-16, but team box scores are missing before 2016-17. Betting lines are present for past games.
-- **ESPN quirks:** the scoreboard accepts one date per request (date ranges are rejected), and play-by-play sequence numbers are not in game order (late corrections get higher numbers); the order of the plays list is the true order.
-- **NBA.com** (stats.nba.com and cdn.nba.com) refused or timed out for plain command-line requests from both a cloud server and the owner's home network. This points to bot detection rather than an IP block. Whether the `nba_api` Python library works from the VPS is untested. Features 13, the tracking version of 14, and defender distance in 10 depend on it.
+- **ESPN is the only data source.** It covers both leagues: scoreboard, box scores, play-by-play with shot locations, injuries, betting lines, and ESPN's own win probability (college from about 2017-18).
+- **Seasons:** both leagues load 2021-22 onward. In a sample, NBA and college team-level data had no failures in those seasons. College player box scores (about 6% of games) and play-by-play (about 10%) are sometimes incomplete; a three-part quality gate keeps those games out of only the parts they would affect.
+- **ESPN quirks** handled by design: one date per scoreboard request, play order taken from the list (not sequence numbers), stale running scores on some plays, free throws worth 0 in older data, missing shot coordinates.
+- **NBA.com is out of scope.** This removes feature 13, tracking data in 14, and defender distance in 10.
 
 ## 9. Open questions
 
 1. App name.
-2. Does `nba_api` work from the VPS? Decides features 13, 14 (tracking version), and defender distance in 10.
-3. How far back does ESPN's college data go, and what are the NCAA's official leaderboard minimums?
-4. Are ESPN's past betting lines closing lines, or lines captured at another time? This affects the market comparison on the report card.
-5. Can the NET ranking be read reliably from the NCAA's site (feature 16)?
+2. Live feed delay behind the broadcast (measure before V2).
+3. Backups (revisit after launch).
+4. For V5: load older tournament selection history for the field projection model only?
