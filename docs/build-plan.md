@@ -109,7 +109,7 @@ Depends on: Sprint 1.2. Can run in parallel with Sprint 1.3.
 - [x] Sanity check: final-season ratings against public ratings such as ESPN's BPI.
 - [x] Tune the final model on all four scored seasons; record it as the champion.
 - [x] Hook the models into the worker: on final, refit ratings, grade the locked prediction, refresh upcoming predictions; lock predictions 30 minutes before tip-off.
-- [ ] Review the exam results with the owner.
+- [x] Review the exam results with the owner. Accepted for launch: accuracy within target in all three exams; log loss within target in one of three (gap about 0.02). Improve from V1.1.
 
 Done when: rolling exam results exist and have been reviewed, and the worker produces, locks, and grades predictions automatically.
 
@@ -201,6 +201,7 @@ Depends on: V1.
 - [ ] Model management (view only): model versions and settings, champion and challengers, rolling exam results per round and candidate, live accuracy against the target, training history.
 - [ ] NCAA absences entry (used from V4).
 - [ ] Shadow models: challengers predict every game quietly and are graded; monthly checkpoint rule (a challenger replaces the champion only if clearly better); switches noted on the report card.
+- [ ] Close the log-loss gap to the market (about 0.02 after V1's exams; target 0.01): try challengers that use player availability and player values game by game, not only in the starting rating.
 
 Done when: the owner can see training history, exam results, live accuracy against the target, and job health in the admin panel.
 
