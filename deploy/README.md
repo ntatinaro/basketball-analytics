@@ -43,7 +43,7 @@ Run these as the user that will own the app (not root).
 
    This builds the images, installs the services, applies database migrations, and starts everything.
 
-5. **Load past seasons** (one time, about 1 to 1.5 hours; it runs in the background at low priority):
+5. **Load past seasons** (one time, about 2 to 3 hours including betting lines; it runs in the background at low priority):
 
    ```
    podman run -d --name hoops-backfill --network hoops --env-file ~/.config/hoops/hoops.env \
@@ -53,9 +53,21 @@ Run these as the user that will own the app (not root).
      localhost/hoops-backend:latest quality-report --league nba
    ```
 
-6. **DNS:** add an `A` record for `hoops.<your domain>` pointing at the VPS's IP address.
+6. **Choose the model and build rating history** (one time, after the backfill finishes; the exams take roughly half an hour or more on two cores):
 
-7. **Your existing Caddy:** add a site block for the subdomain. Which address to forward to depends on how that Caddy runs:
+   ```
+   HOOPS="podman run --rm --network hoops --env-file $HOME/.config/hoops/hoops.env localhost/hoops-backend:latest"
+   $HOOPS exams --league nba --warmup 2022 --seasons 2023-2026 --candidates 40
+   $HOOPS rebuild-ratings --league nba --seasons 2022-2026
+   $HOOPS refresh-predictions --league nba
+   systemctl --user restart hoops-worker
+   ```
+
+   The exams print the results against the accuracy target and record the winning model as the champion. The worker uses it from then on.
+
+7. **DNS:** add an `A` record for `hoops.<your domain>` pointing at the VPS's IP address.
+
+8. **Your existing Caddy:** add a site block for the subdomain. Which address to forward to depends on how that Caddy runs:
 
    - **Caddy installed directly on the VPS:**
 

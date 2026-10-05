@@ -141,15 +141,14 @@ class Loader:
         return loaded, failed
 
     def backfill_close_lines(self, season: int) -> int:
-        """Stores ESPN's labeled closing lines for finished games that have none. Game
-        summaries often carry no odds for past seasons; the odds endpoint does."""
+        """Stores ESPN's labeled closing lines for finished games that have no line at all.
+        Game summaries carry no odds for many past games; the odds endpoint does."""
         pending = self.conn.execute(
             """
             SELECT g.game_id, g.espn_id FROM games g
             WHERE g.league = %s AND g.season = %s AND g.status = 'final'
               AND g.season_type <> 'pre'
-              AND NOT EXISTS (SELECT 1 FROM betting_lines b
-                              WHERE b.game_id = g.game_id AND b.line_kind = 'espn_close')
+              AND NOT EXISTS (SELECT 1 FROM betting_lines b WHERE b.game_id = g.game_id)
             ORDER BY g.start_time
             """,
             (str(self.league), season),
