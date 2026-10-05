@@ -1,7 +1,7 @@
 # Basketball Analytics App: Technical Architecture
 
 Last updated: 2026-10-05 (end of architecture phase, pending owner sign-off)
-Companion document: `basketball-analytics-feature-spec.md` (feature numbers below refer to it)
+Companion document: `feature-spec.md` (feature numbers below refer to it)
 
 ## 1. Context for a new session
 
@@ -74,7 +74,7 @@ Not used, by decision: Redis, Parquet/DuckDB, Next.js, Go, Docker, `nba_api`.
 | Shot coordinates | Missing values use large negative sentinels. Treat them as missing. |
 | Substitutions | NBA: "X enters the game for Y", consistent in sampled games from 2018-19 on. College: separate "subbing in" and "subbing out" events; present in recent seasons, absent in some older ones. |
 | Division I | 362 Division I teams. Non-Division I opponents are common in November and easy to identify. |
-| Betting lines | For a recent game, the summary line equalled the core API's labeled closing line. Older games have no open/close labels. From launch, we record lines ourselves near tip-off. |
+| Betting lines | For a recent game, the summary line equalled the core API's labeled closing line. Game summaries have no lines at all for NBA 2023-24 and 2024-25 (and about a fifth of 2025-26); the core odds endpoint has labeled closing lines for those games, so the backfill fills them from there. 2021-22 and 2022-23 lines come from the summaries, without open/close labels. From launch, we record lines ourselves near tip-off. |
 | NBA.com | Out of scope, by decision. |
 
 ### 4.3 Data quality sample (2026-10-05)
@@ -130,13 +130,15 @@ About 25 random completed games per season, per league. Rough rates; the build r
 | --- | --- | --- |
 | Schedule sync | Every morning, then every 3 hours | Scoreboards for the past 2 and next 7 days: new games, time changes, postponements |
 | Injury sync | Every 15 minutes on game days | ESPN injury statuses. A change in "Out" players writes a new, unlocked prediction. |
-| Game watcher | Every minute while any game is near tip-off or live | 30 minutes before tip-off: lock the prediction and record the betting line. On final: store the box score and plays, run quality checks, refit ratings, grade the prediction, refresh upcoming predictions and the precomputed stat tables. From V3 also re-run the season simulator. |
-| Overnight corrections | Nightly, about 4 AM Eastern | Re-pull the previous day's games, refit player models, rebuild derived tables |
+| Reference sync | Daily, 4:05 AM Eastern (before overnight corrections) | Teams, conferences, rosters and player details |
+| Game watcher | Every minute while any game is near tip-off or live | 30 minutes before tip-off: lock the prediction and record the betting line. On final: store the box score and plays, run quality checks, grade every finished game, then refit ratings and refresh upcoming predictions once, and refresh the precomputed stat tables. Each game is handled on its own: locking needs nothing from ESPN, and a game that fails to load is retried at most three times, then left to the overnight job. From V3 also re-run the season simulator. |
+| Overnight corrections | Nightly, 4:15 AM Eastern | Re-pull the previous day's games and any final that failed to load, grade any locked prediction still ungraded, refit, prune superseded raw responses older than 7 days |
 | Live poller (V2) | Every ~10 seconds per live game | Live state, both win probability lines, insight cards, NOTIFY to the API |
 | Backfill, backtests, rolling exams | Run by hand | Load past seasons, evaluate candidate models |
 
 **Cross-cutting rules:**
-- Every job run is logged in `job_runs` (start, end, status, error). The API exposes the last successful update; the website shows "Data delayed, last updated …" when it is stale.
+- Every job run is logged in `job_runs` (start, end, status, error, and per-game errors in its details).
+- If the worker loses its database connection it exits, and systemd restarts it with a fresh one. The API exposes the last successful update; the website shows "Data delayed, last updated …" when it is stale.
 - Times are stored in UTC and shown in the viewer's local time zone.
 - Heavy jobs run at low CPU priority so the website stays responsive.
 
@@ -168,8 +170,9 @@ Postgres. ESPN IDs are stored directly on teams, players, and games (no crosswal
 | Game data | `games`, `team_game_stats`, `player_game_stats`, `plays`, `injury_snapshots`, `betting_lines` | `games` holds the Division I flag, quality status per check, and exclusion reason. `betting_lines` records the line kind: captured by us before tip-off, ESPN labeled close, or timing uncertain. |
 | Model outputs | `player_values`, `team_ratings`, `team_sub_ratings`, `predictions`, `prediction_grades` | Full rating history for trend charts. `predictions` is append-only (a database trigger rejects updates and deletes) with a locked flag. Every output records its model version. |
 | Model management | `model_versions`, `training_runs`, `exam_results` | Each model version's settings and role (champion, challenger from V1.1), each training run, and each rolling exam result per candidate. Feeds the admin panel. |
-| Precomputed for screens | `team_season_stats`, `player_season_stats` | Refreshed whenever a game goes final. Traded players get one row per team plus a combined row. |
+| Precomputed for screens | `team_season_stats`, `player_season_stats` | Postgres materialized views, refreshed (without blocking readers) whenever a game goes final. Traded players get one row per team plus a combined row. `screen_refreshes` records the last refresh so the API cache knows when to rebuild. |
 | Operations | `job_runs`, `data_quality_issues` | Data freshness, job history, quality reports |
+| Backtests | `backtest_predictions` | The champion's walk-forward predictions for past seasons. Feeds the report card's backtest section and fills predictions on past game pages. |
 
 **Added in later versions:** `player_projections`, admin login, `manual_absences`, shadow predictions (V1.1); `live_states`, `live_win_prob` (ours and ESPN's), `insights` (V2); `player_impact`, `lineup_stats`, `shot_quality`, `play_style`, `sim_runs`, `sim_results` (V3); `field_projection`, `brackets`, `bracket_sim_results` (V5).
 
@@ -218,6 +221,7 @@ Every model has a version string, and outputs record the version that produced t
 - **Metrics:** log loss, Brier score, accuracy, calibration, mean absolute error on margin and total.
 - **Benchmarks:** the naive baseline (home team favored at its historical win rate), the model without the roster starting point, and the betting market (bookmaker margin removed).
 - **Accuracy target:** over a season, within 1.5 percentage points of the market's accuracy and within 0.01 of its log loss, and clearly better than the naive baseline. The app launches regardless; the report card and admin panel show the gap.
+- **Absences in backtests:** past injury reports are not available, so backtests treat a rotation player who did not play as "Out". Live predictions use the injury report.
 - **Sanity check:** final-season ratings broadly agree with public ratings such as ESPN's BPI.
 - **Shadow models (V1.1):** the champion makes public predictions; a few challengers predict every game quietly and are graded. At fixed checkpoints (for example monthly), a challenger replaces the champion only if it has been clearly better. Switches are noted on the report card.
 
@@ -361,6 +365,7 @@ Scope by version, from feature spec section 7.
 4. Whether the existing Caddy runs in a container, and how it reaches the app (check at deploy).
 5. Backups (revisit after launch).
 6. For V5: load older tournament selection history for the field projection model only?
+7. NCAA "Qualified only" minimums (75% of games; 5 field goals, 2.5 threes, 2.5 free throws made per game) to be reconfirmed against the official NCAA rules before V4.
 
 ## 19. Sources
 

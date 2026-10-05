@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+node_modules/
+
+# Secrets and local data
+deploy/.env
+/data/
+web/dist/
+web/test-results/
+web/playwright-report/
+web/*.tsbuildinfo

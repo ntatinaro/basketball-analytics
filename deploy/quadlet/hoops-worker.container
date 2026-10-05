@@ -1,0 +1,24 @@
+[Unit]
+Description=hoops: background worker
+Requires=hoops-postgres.service
+After=hoops-postgres.service
+
+[Container]
+ContainerName=hoops-worker
+Image=localhost/hoops-backend:latest
+Network=hoops.network
+Volume=hoops-raw.volume:/data/raw
+EnvironmentFile=%h/.config/hoops/hoops.env
+Exec=worker
+
+[Service]
+Restart=always
+# Heavy jobs (model fitting) must never slow the website.
+Nice=10
+CPUWeight=50
+# Model fitting peaks at 1 to 2 GB; never let it squeeze the VPS's other services.
+MemoryHigh=2G
+MemoryMax=2500M
+
+[Install]
+WantedBy=default.target
