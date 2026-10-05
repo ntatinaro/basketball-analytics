@@ -21,6 +21,7 @@ from hoops.models import data
 from hoops.models.config import DEFAULT, ModelSettings
 from hoops.models.context import GameContext, absence_cost, schedule_context
 from hoops.models.explainer import explain, fit_sensitivities
+from hoops.models.live_projections import Projector
 from hoops.models.player_values import roster_strength, season_player_values
 from hoops.models.predictor import Calibration, Prediction, predict
 from hoops.models.ratings import (
@@ -87,6 +88,7 @@ class ModelHooks:
         self.rehearsal = rehearsal     # preseason games get (rehearsal) predictions too
         self._priors: dict[tuple[int, str], tuple[Priors, pd.DataFrame]] = {}
         self._state: LiveState | None = None
+        self.projector = Projector(league)
 
     # -- state ------------------------------------------------------------------------
 
@@ -132,6 +134,7 @@ class ModelHooks:
     def refit(self, conn: psycopg.Connection, now: datetime | None = None) -> LiveState:
         """Fits current ratings from every finished game of the season and stores them."""
         now = now or datetime.now(UTC)
+        self.projector.invalidate()
         champion = load_champion(conn, self.league)
         season = self.current_season(conn, now)
         games = data.games_frame(conn, self.league, [season])
@@ -250,6 +253,8 @@ class ModelHooks:
             "explainer": [{"text": m.text, "points": m.points, "metric": m.metric,
                            "beneficiary": m.beneficiary} for m in mismatches],
         }
+        self._project(conn, game_id, season, season_type, home, away, preds, context, absent,
+                      lock)
         digest = hashlib.sha1(json.dumps(
             {k: inputs[k] for k in ("home", "away", "absences", "rest_days")},
             sort_keys=True, default=str).encode()).hexdigest()
@@ -273,6 +278,21 @@ class ModelHooks:
              json.dumps(inputs, default=str), digest),
         ).fetchone()
         return pid
+
+    def _project(self, conn, game_id, season, season_type, home, away,
+                 preds: list[Prediction], context: GameContext, absent: dict, lock: bool) -> None:
+        """Player projections for the game. A failure here never blocks the prediction."""
+        out = {e["player_id"] for side in absent.values() for e in side
+               if e.get("status") == "Out"}
+        try:
+            self.projector.project_game(
+                conn, game_id, season=season, season_type=season_type, home=home, away=away,
+                home_points=float(np.mean([p.home_points for p in preds])),
+                away_points=float(np.mean([p.away_points for p in preds])),
+                home_b2b=context.home_rest_days <= 1, away_b2b=context.away_rest_days <= 1,
+                out=out, lock=lock)
+        except Exception:  # noqa: BLE001
+            log.exception("player projections failed for game %s", game_id)
 
     def _context(self, conn, game_id, season, home, away, start, state: LiveState):
         sched = pd.DataFrame(conn.execute(
@@ -351,6 +371,10 @@ class ModelHooks:
 
     def after_final(self, conn: psycopg.Connection, game_id: int) -> None:
         self.grade(conn, game_id)
+        try:
+            self.projector.grade(conn, game_id)
+        except Exception:  # noqa: BLE001
+            log.exception("grading player projections failed for game %s", game_id)
         self.refit(conn)
         self.refresh(conn)
 
