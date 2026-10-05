@@ -1,3 +1,7 @@
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { api } from "./api";
+
 // Forgiving in-page search: case-insensitive, accent-insensitive, and tolerant of a
 // typo or two in longer words ("giannis antetokounpo", "jaln brunsn").
 
@@ -23,4 +27,28 @@ export function matches(query: string, fields: string[]): boolean {
   return q.split(/\s+/).every((term) =>
     words.some((w) => w.startsWith(term) || (term.length > 3 && distance(term, w.slice(0, term.length + 1)) <= (term.length > 6 ? 2 : 1))),
   );
+}
+
+// Server search adds what the page cannot know: nicknames ("sixers", "steph") and the
+// database's typo-tolerant matching. Results are the matching IDs, after a short pause in
+// typing; undefined until the server answers (pages show local matches meanwhile).
+export function useServerMatches(league: string, kind: "teams" | "players", query: string): Set<number> | undefined {
+  const q = query.trim();
+  const [debounced, setDebounced] = useState(q);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(q), 200);
+    return () => clearTimeout(t);
+  }, [q]);
+  const result = useQuery({
+    queryKey: ["search", league, kind, debounced],
+    queryFn: () => api<{ results: { id: number; score: number }[] }>(`${league}/search/${kind}`, { q: debounced }),
+    enabled: debounced.length > 0,
+    staleTime: 5 * 60_000,
+  });
+  return useMemo(() => {
+    if (!result.data || debounced !== q) return undefined;
+    // Only close matches: fuzzy search also returns weak look-alikes further down.
+    const top = Math.max(0, ...result.data.results.map((r) => r.score));
+    return new Set(result.data.results.filter((r) => r.score >= 0.6 * top).map((r) => r.id));
+  }, [result.data, debounced, q]);
 }

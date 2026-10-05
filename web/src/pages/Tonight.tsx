@@ -53,7 +53,10 @@ export function TonightPage() {
 function GameCardView({ game }: { game: GameCard }) {
   const league = useLeague();
   const p = game.prediction;
-  const shown = p?.updated_after_lock ?? p;
+  // The locked pick is what gets graded, so it is always the main line; a newer
+  // prediction made after the lock is only a note (the game page does the same).
+  const shown = p;
+  const after = p?.updated_after_lock;
   const scored = game.status === "final" || game.status === "live";
   const outs = game.players_out.home + game.players_out.away;
   return (
@@ -88,7 +91,13 @@ function GameCardView({ game }: { game: GameCard }) {
               <span className="muted"> · range {rangeText(shown.home_win_prob, shown.margin_low, shown.margin_high)}</span>
             )}
           </div>
-          {p?.updated_after_lock && <div className="small muted">Updated after lock, not graded</div>}
+          {after && game.status !== "final" && (
+            <div className="small muted">
+              Updated after lock, not graded:{" "}
+              {favoredText(game.home.short_name ?? game.home.name, game.away.short_name ?? game.away.name,
+                after.home_win_prob, after.margin_home)}
+            </div>
+          )}
           {p?.grade && (
             <span className={`pill ${p.grade.correct ? "good" : "bad"}`}>
               {p.grade.correct ? "✓ Model was right" : "✗ Model was wrong"}

@@ -1,6 +1,7 @@
 # Website image: builds the static site, then serves it with Caddy on port 8080.
 # Caddy also forwards /api to the API container.
 FROM docker.io/library/node:22-slim AS build
+LABEL org.hoops.app=hoops
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
@@ -8,5 +9,6 @@ COPY web ./
 RUN npm run build
 
 FROM docker.io/library/caddy:2
+LABEL org.hoops.app=hoops
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
 COPY --from=build /web/dist /srv

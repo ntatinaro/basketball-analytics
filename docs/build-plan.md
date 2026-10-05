@@ -202,6 +202,7 @@ Depends on: V1.
 - [ ] NCAA absences entry (used from V4).
 - [ ] Shadow models: challengers predict every game quietly and are graded; monthly checkpoint rule (a challenger replaces the champion only if clearly better); switches noted on the report card.
 - [ ] Close the log-loss gap to the market (about 0.02 after V1's exams; target 0.01): try challengers that use player availability and player values game by game, not only in the starting rating.
+- [ ] Backtest with the real injury snapshots collected since launch (V1's backtests use who actually played, which is more than live predictions know), and compare with the exams' honest floor (absences ignored).
 
 Done when: the owner can see training history, exam results, live accuracy against the target, and job health in the admin panel.
 

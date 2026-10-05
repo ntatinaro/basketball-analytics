@@ -6,7 +6,7 @@ import { seasonLabel } from "../format";
 import { DataTable } from "../components/DataTable";
 import { playerColumns, positionFilter, PositionFilter, qualifierFor } from "../components/playerColumns";
 import { ErrorNote, Loading, SeasonPicker, Segmented, useLeague, useMeta, useSeasonParam } from "../components/ui";
-import { matches } from "../search";
+import { matches, useServerMatches } from "../search";
 
 type Scope = "league" | "team" | "conference";
 
@@ -37,13 +37,14 @@ export function PlayersPage() {
   });
 
   const qualifier = qualifierFor(sorting[0]?.id);
+  const server = useServerMatches(league, "players", query);
   // Memoized so sorting re-sorts the same rows instead of rebuilding the whole table.
   const rows = useMemo(() => (players.data?.players ?? []).filter(
     (r) =>
       positionFilter(position)(r) &&
-      matches(query, [r.name]) &&
+      (matches(query, [r.name]) || !!server?.has(r.player_id)) &&
       (!qualifiedOnly || scope === "team" || query !== "" || r.qualified[qualifier]),
-  ), [players.data, position, query, qualifiedOnly, scope, qualifier]);
+  ), [players.data, position, query, qualifiedOnly, scope, qualifier, server]);
   const columns = useMemo(() => playerColumns(league, scope !== "team"), [league, scope]);
   const scopes: [Scope, string][] = league === "nba"
     ? [["team", "Team"], ["league", "League"]]

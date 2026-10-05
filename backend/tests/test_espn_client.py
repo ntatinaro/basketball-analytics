@@ -95,3 +95,16 @@ def test_prune_removes_only_old_files(tmp_path):
                                now - timedelta(days=age_days), {}))
     assert store.prune("nba", "live", now - timedelta(days=7)) == 1
     assert len(list(tmp_path.rglob("*.json.gz"))) == 1
+
+
+def test_prune_can_keep_the_latest_response_per_request(tmp_path):
+    store = RawStore(tmp_path)
+    old = datetime(2026, 1, 1, tzinfo=UTC)
+    for minute in range(3):                      # three polls of the same scoreboard
+        store.save(RawResponse("nba", "scoreboard", {"dates": "20260101"}, "u", 200,
+                               old + timedelta(minutes=minute), {"n": minute}))
+    store.save(RawResponse("nba", "scoreboard", {"dates": "20260102"}, "u", 200, old,
+                           {"n": 9}))
+    assert store.prune("nba", "scoreboard", old + timedelta(days=30), keep_latest=True) == 2
+    assert store.latest("nba", "scoreboard", {"dates": "20260101"}).body == {"n": 2}
+    assert store.latest("nba", "scoreboard", {"dates": "20260102"}).body == {"n": 9}

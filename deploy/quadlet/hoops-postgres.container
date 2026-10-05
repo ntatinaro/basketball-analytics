@@ -8,13 +8,17 @@ Network=hoops.network
 Volume=hoops-pgdata.volume:/var/lib/postgresql/data
 EnvironmentFile=%h/.config/hoops/hoops.env
 Environment=POSTGRES_USER=hoops POSTGRES_DB=hoops
-HealthCmd=pg_isready -U hoops
+# -h forces TCP: on first start the socket is up before the network listener.
+HealthCmd=pg_isready -h localhost -U hoops
 HealthInterval=10s
 Notify=healthy
 
 [Service]
 Restart=always
 TimeoutStartSec=120
+# The VPS hosts other services: cap memory (architecture section 5).
+MemoryHigh=1200M
+MemoryMax=1500M
 
 [Install]
 WantedBy=default.target

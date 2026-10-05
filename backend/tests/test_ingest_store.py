@@ -88,3 +88,11 @@ def test_college_game_and_injuries(db):
     injuries = parse.parse_injuries(load("nba_injuries.json.gz"))
     assert store.write_injuries(FETCHED, injuries) == len(injuries)
     assert db.execute("SELECT count(*) FROM injury_snapshots").fetchone()[0] == len(injuries)
+
+
+def test_player_details_update_even_when_the_player_is_cached(db):
+    store = Store(db, League.NBA)
+    pid = store.upsert_player("77", "Some Player")
+    assert store.upsert_player("77", "Some Player", position="C", headshot_url="h.png") == pid
+    assert db.execute("SELECT position, headshot_url FROM players WHERE player_id = %s",
+                      (pid,)).fetchone() == ("C", "h.png")

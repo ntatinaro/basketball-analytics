@@ -148,3 +148,27 @@ def test_rating_history_stops_at_each_teams_last_game(db, league):
         "SELECT team_id, max(as_of) FROM team_ratings WHERE season = 2026 GROUP BY 1").fetchall()
     late = [d for _, d in final_day if d > last + timedelta(days=7)]
     assert len(late) == 2                     # only the two teams still playing
+
+
+def test_after_finals_grades_each_game_and_refits_once(db, league):
+    hooks = ModelHooks(League.NBA)
+    first = add_upcoming(db, league, 20)
+    second = insert_season_game(db, league, NOW + timedelta(minutes=25))
+    for game_id in (first, second):
+        hooks.lock(db, game_id, NOW)
+        db.execute("UPDATE games SET status = 'final', home_score = 101, away_score = 99"
+                   " WHERE game_id = %s", (game_id,))
+    before = db.execute("SELECT count(*) FROM team_ratings").fetchone()[0]
+    hooks.after_finals(db, [first, second])
+    assert db.execute("SELECT count(*) FROM prediction_grades").fetchone()[0] == 2
+    assert db.execute("SELECT count(*) FROM team_ratings").fetchone()[0] - before == 6
+
+
+def test_overnight_grades_locked_predictions_that_were_missed(db, league):
+    hooks = ModelHooks(League.NBA)
+    game_id = add_upcoming(db, league, 20)
+    hooks.lock(db, game_id, NOW)
+    db.execute("UPDATE games SET status = 'final', home_score = 90, away_score = 99"
+               " WHERE game_id = %s", (game_id,))      # final, but the worker was down
+    assert hooks.grade_missing(db) == 1
+    assert hooks.grade_missing(db) == 0                # nothing left to grade

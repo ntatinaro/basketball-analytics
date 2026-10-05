@@ -74,7 +74,8 @@ class Store:
     def upsert_player(self, espn_id: str, display_name: str, *, short_name: str | None = None,
                       position: str | None = None, headshot_url: str | None = None) -> int:
         cached = self._player_ids.get(espn_id)
-        if cached is not None:
+        # The cache only saves ID lookups; new details (roster syncs) are always written.
+        if cached is not None and short_name is None and position is None and headshot_url is None:
             return cached
         (player_id,) = self.conn.execute(
             """

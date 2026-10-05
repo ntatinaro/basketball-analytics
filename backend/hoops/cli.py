@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from datetime import date
 
 import psycopg
@@ -95,6 +96,13 @@ def main(argv: list[str] | None = None) -> None:
         level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    if args.command != "api":
+        # Everything except the API is background work (worker, backfill, exams): it must
+        # never slow the website or the VPS's other services.
+        try:
+            os.nice(10)
+        except OSError:
+            logging.getLogger(__name__).warning("could not lower CPU priority")
 
     if args.command == "worker":
         from hoops.worker import run

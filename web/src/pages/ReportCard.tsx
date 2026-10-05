@@ -122,7 +122,9 @@ function Backtests({ data }: { data: ReportCard }) {
       <h2>Past seasons (backtests)</h2>
       <p className="small muted">
         Each past game was predicted using only games played before it, with the same model that runs live.
-        These are replays, not predictions made at the time.
+        These are replays, not predictions made at the time. Past injury reports are not available, so the
+        replays know which players actually sat out; live predictions only know the injury report, so expect
+        live results to be a little worse.
       </p>
       {data.backtests.length === 0 && <Empty>No backtests yet.</Empty>}
       {data.backtests.map((b) => (

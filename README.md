@@ -23,3 +23,22 @@ uv run hoops migrate                    # create or update the database tables
 uv run ruff check .                     # lint
 uv run pytest                           # tests (database tests need HOOPS_TEST_DATABASE_URL)
 ```
+
+The test database must use UTF-8 encoding (`deploy/dev-db.sh` creates it that way); a
+`SQL_ASCII` database makes the ESPN fixture tests fail. Tests wipe it on every run.
+
+Website:
+
+```
+cd web
+npm ci
+npm run dev                             # http://localhost:5173, forwards /api to :8000
+npm run typecheck && npm run build      # what CI runs
+```
+
+Two checks are manual only (CI does not run them; they need the API running with data):
+
+```
+npx playwright test                     # click-through at phone and desktop sizes
+node scripts/perf-check.mjs             # first load and sort time on a throttled phone
+```

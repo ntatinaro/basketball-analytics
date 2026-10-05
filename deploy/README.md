@@ -28,7 +28,7 @@ Run these as the user that will own the app (not root).
    cd ~/hoops
    ```
 
-3. **Create the settings file** and fill in a strong database password (the same value in both places):
+3. **Create the settings file** and fill in a strong database password in both places: as is in `POSTGRES_PASSWORD`, and URL-encoded inside `HOOPS_DATABASE_URL` (a password of letters and digits needs no encoding). `POSTGRES_PASSWORD` is only read when the database is first created; changing it later also needs `ALTER USER hoops PASSWORD '...'` inside Postgres.
 
    ```
    cp deploy/.env.example deploy/.env
@@ -43,7 +43,7 @@ Run these as the user that will own the app (not root).
 
    This builds the images, installs the services, applies database migrations, and starts everything.
 
-5. **Load past seasons** (one time, about 2 to 3 hours including betting lines; it runs in the background at low priority):
+5. **Load past seasons** (one time, about 2 to 3 hours including betting lines; every `hoops` command except the API runs at low CPU priority):
 
    ```
    podman run -d --name hoops-backfill --network hoops --env-file ~/.config/hoops/hoops.env \

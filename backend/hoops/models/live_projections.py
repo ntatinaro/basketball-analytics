@@ -168,6 +168,19 @@ class Projector:
         return graded
 
 
+    def grade_missing(self, conn: psycopg.Connection) -> int:
+        """Grades locked projection sets of finished games that have no grade yet."""
+        rows = conn.execute(
+            """
+            SELECT DISTINCT ps.game_id FROM projection_sets ps
+            JOIN games g USING (game_id)
+            LEFT JOIN projection_grades pg USING (projection_set_id)
+            WHERE g.league = %s AND g.status = 'final' AND ps.is_locked
+              AND pg.projection_set_id IS NULL
+            """, (str(self.league),)).fetchall()
+        return sum(self.grade(conn, game_id) for (game_id,) in rows)
+
+
 def grade_set(conn: psycopg.Connection, set_id: int) -> dict | None:
     rows = conn.execute(
         """

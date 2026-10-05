@@ -12,6 +12,8 @@ PublishPort=127.0.0.1:8080:8080
 
 [Service]
 Restart=always
+MemoryHigh=96M
+MemoryMax=128M
 
 [Install]
 WantedBy=default.target

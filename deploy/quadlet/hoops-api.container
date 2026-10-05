@@ -12,6 +12,8 @@ Exec=api
 
 [Service]
 Restart=always
+MemoryHigh=384M
+MemoryMax=512M
 
 [Install]
 WantedBy=default.target

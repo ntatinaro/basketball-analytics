@@ -21,11 +21,11 @@ case "${1:-start}" in
       podman start "$NAME" >/dev/null
     fi
     for _ in $(seq 1 30); do
-      podman exec "$NAME" pg_isready -U hoops -q && break
+      podman exec "$NAME" pg_isready -h localhost -U hoops -q && break
       sleep 1
     done
     podman exec "$NAME" psql -U hoops -tAc "SELECT 1 FROM pg_database WHERE datname = 'hoops_test'" \
-      | grep -q 1 || podman exec "$NAME" createdb -U hoops hoops_test
+      | grep -q 1 || podman exec "$NAME" createdb -U hoops -E UTF8 -T template0 hoops_test
     echo "Postgres 17 ready on 127.0.0.1:${PORT}"
     echo "  export HOOPS_DATABASE_URL=postgresql://hoops:hoops@127.0.0.1:${PORT}/hoops"
     echo "  export HOOPS_TEST_DATABASE_URL=postgresql://hoops:hoops@127.0.0.1:${PORT}/hoops_test"

@@ -7,7 +7,8 @@ work on their own and the models can be developed and tested separately.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -16,6 +17,7 @@ import psycopg
 
 from hoops.db.refresh import refresh_screen_tables
 from hoops.espn import parse
+from hoops.espn.client import EspnError
 from hoops.ingest.load import Loader
 from hoops.leagues import COUNTED_SEASON_TYPES, League
 
@@ -25,6 +27,10 @@ EASTERN = ZoneInfo("America/New_York")
 LOCK_BEFORE_TIP = timedelta(minutes=30)
 WATCH_AHEAD = timedelta(minutes=45)       # watch games starting this soon
 WATCH_BEHIND = timedelta(hours=8)         # and games that started this long ago
+MAX_LOAD_FAILURES = 3                     # a final failing this often waits for overnight
+RAW_KEEP = timedelta(days=7)              # superseded raw responses older than this go
+# ESPN outages and unexpected payloads: recorded per game, never allowed to stop a job.
+FETCH_ERRORS = (EspnError, KeyError, ValueError, TypeError)
 
 
 def current_season(today: date) -> int:
@@ -39,7 +45,7 @@ def eastern_date(moment: datetime) -> date:
 class GameHooks(Protocol):
     def lock(self, conn: psycopg.Connection, game_id: int, now: datetime) -> None: ...
 
-    def after_final(self, conn: psycopg.Connection, game_id: int) -> None: ...
+    def after_finals(self, conn: psycopg.Connection, game_ids: list[int]) -> None: ...
 
     def after_injuries(self, conn: psycopg.Connection, league: League) -> None: ...
 
@@ -54,7 +60,7 @@ class NoModelHooks:
     def lock(self, conn, game_id, now) -> None:
         pass
 
-    def after_final(self, conn, game_id) -> None:
+    def after_finals(self, conn, game_ids) -> None:
         pass
 
     def after_injuries(self, conn, league) -> None:
@@ -72,6 +78,7 @@ class Jobs:
     loader: Loader
     hooks: GameHooks
     rehearsal: bool = False          # treat preseason games as predictable, for testing
+    load_failures: dict[int, int] = field(default_factory=dict)   # game_id -> failed loads
 
     @property
     def conn(self) -> psycopg.Connection:
@@ -164,27 +171,56 @@ class Jobs:
         ).fetchall()
 
     def game_watcher(self, now: datetime | None = None) -> dict:
+        """Locks games near tip-off and stores finished ones. Every game is handled on its
+        own: an ESPN outage or one bad game never stops the others, and locking needs
+        nothing from ESPN."""
         now = now or datetime.now(UTC)
         watched = self.watched_games(now)
-        details = {"watched": len(watched), "locked": 0, "finished": 0}
-        if watched:
-            for day in sorted({eastern_date(g[2]) for g in watched}):
-                self.loader.sync_day(day)
+        details: dict = {"watched": len(watched), "locked": 0, "finished": 0, "errors": []}
+        for day in sorted({eastern_date(g[2]) for g in watched}):
+            self._isolated(details, f"scoreboard {day}",
+                           lambda day=day: self.loader.sync_day(day), FETCH_ERRORS)
         for game_id, espn_id in self.unlocked_games_near_tip(now):
-            self.capture_pregame_line(game_id, espn_id)
-            self.hooks.lock(self.conn, game_id, now)
-            details["locked"] += 1
+            self._isolated(details, f"pregame line {espn_id}",
+                           lambda g=game_id, e=espn_id: self.capture_pregame_line(g, e),
+                           FETCH_ERRORS)
+            if self._isolated(details, f"lock {game_id}",
+                              lambda g=game_id: self.hooks.lock(self.conn, g, now)):
+                details["locked"] += 1
         finished = []
         for game_id, espn_id in self.finished_games_to_load(now):
-            self.loader.load_game(espn_id)
+            if self.load_failures.get(game_id, 0) >= MAX_LOAD_FAILURES:
+                continue                     # retried by the overnight job
+            if not self._isolated(details, f"final {espn_id}",
+                                  lambda e=espn_id: self.loader.load_game(e), FETCH_ERRORS):
+                self.load_failures[game_id] = self.load_failures.get(game_id, 0) + 1
+                continue
+            self.load_failures.pop(game_id, None)
             self.capture_close_line(game_id, espn_id)
             finished.append(game_id)
         if finished:
             refresh_screen_tables(self.conn)
-        for game_id in finished:
-            self.hooks.after_final(self.conn, game_id)
+            self._isolated(details, "after finals",
+                           lambda: self.hooks.after_finals(self.conn, finished))
         details["finished"] = len(finished)
+        if not details["errors"]:
+            del details["errors"]
         return details
+
+    @staticmethod
+    def _isolated(details: dict, label: str, fn: Callable[[], object],
+                  errors: tuple[type[BaseException], ...] = (Exception,)) -> bool:
+        """Runs one step, recording a failure in the job details instead of raising. A lost
+        database connection is not caught: the worker exits so systemd restarts it."""
+        try:
+            fn()
+            return True
+        except (psycopg.OperationalError, psycopg.InterfaceError):
+            raise
+        except errors as exc:
+            log.warning("%s failed: %s", label, exc)
+            details.setdefault("errors", []).append(f"{label}: {type(exc).__name__}: {exc}")
+            return False
 
     def capture_pregame_line(self, game_id: int, espn_id: str) -> None:
         raw = self.loader.client.summary(self.league, espn_id)
@@ -203,17 +239,28 @@ class Jobs:
     # -- overnight --------------------------------------------------------------------
 
     def overnight(self, now: datetime | None = None) -> dict:
-        """Re-pulls the previous day's finished games for official corrections."""
+        """Re-pulls the previous day's finished games for official corrections, retries
+        finals that failed to load, grades anything ungraded, and prunes raw responses."""
         now = now or datetime.now(UTC)
         yesterday = eastern_date(now) - timedelta(days=1)
         start = datetime.combine(yesterday, datetime.min.time(), EASTERN)
         rows = self.conn.execute(
-            "SELECT espn_id FROM games WHERE league = %s AND status = 'final'"
-            " AND start_time >= %s AND start_time < %s",
+            "SELECT game_id, espn_id FROM games WHERE league = %s AND status = 'final'"
+            " AND ((start_time >= %s AND start_time < %s) OR team_quality_ok IS NULL)",
             (str(self.league), start, start + timedelta(days=1)),
         ).fetchall()
-        for (espn_id,) in rows:
-            self.loader.load_game(espn_id)
+        details: dict = {"reloaded": 0, "errors": []}
+        for _game_id, espn_id in rows:
+            if self._isolated(details, f"reload {espn_id}",
+                              lambda e=espn_id: self.loader.load_game(e), FETCH_ERRORS):
+                details["reloaded"] += 1
+        self.load_failures.clear()
         refresh_screen_tables(self.conn)
         self.hooks.overnight(self.conn, self.league)
-        return {"reloaded": len(rows)}
+        store, league = self.loader.client.raw_store, str(self.league)
+        details["raw_pruned"] = sum(
+            store.prune(league, endpoint, now - RAW_KEEP, keep_latest=True)
+            for endpoint in ("scoreboard", "summary", "injuries", "odds"))
+        if not details["errors"]:
+            del details["errors"]
+        return details

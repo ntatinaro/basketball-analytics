@@ -24,7 +24,7 @@ const firstLoad = Date.now() - start;
 const sortMs = await page.evaluate(async () => {
   const times = [];
   for (const col of ["RPG", "APG", "PPG", "MPG", "FG%"]) {
-    const header = [...document.querySelectorAll("th")].find((th) => th.textContent?.startsWith(col));
+    const header = [...document.querySelectorAll("th button")].find((b) => b.textContent?.startsWith(col));
     const t0 = performance.now();
     header.click();
     await new Promise((r) => requestAnimationFrame(() => { void document.body.offsetHeight; r(); }));

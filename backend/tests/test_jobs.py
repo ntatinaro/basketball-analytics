@@ -33,8 +33,8 @@ class RecordingHooks:
     def lock(self, conn, game_id, now):
         self.locked.append(game_id)
 
-    def after_final(self, conn, game_id):
-        self.finished.append(game_id)
+    def after_finals(self, conn, game_ids):
+        self.finished.extend(game_ids)
 
     def after_injuries(self, conn, league):
         self.injury_updates += 1
@@ -59,6 +59,14 @@ def fake_espn(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json=load("nba_odds_2025.json.gz"))
         return httpx.Response(200, json={"items": []})
     return httpx.Response(200, json={"events": []})   # scoreboards: nothing new
+
+
+def jobs_with(db, tmp_path, transport, hooks=None) -> Jobs:
+    """Jobs whose ESPN client goes through `transport` (teams must already be stored)."""
+    client = EspnClient(RawStore(tmp_path / "outage"), min_interval=0, max_retries=1,
+                        sleep=lambda _: None,
+                        client=httpx.Client(transport=httpx.MockTransport(transport)))
+    return Jobs(loader=Loader(db, client, League.NBA), hooks=hooks or RecordingHooks())
 
 
 @pytest.fixture
@@ -139,3 +147,84 @@ def test_close_line_backfill_fills_only_missing_finals(db, jobs):
     rows = db.execute("SELECT game_id, line_kind, home_moneyline FROM betting_lines").fetchall()
     assert rows == [(with_odds, "espn_close", 130)]
     assert jobs.loader.backfill_close_lines(2026) == 0                # already stored
+
+
+class FailingLockHooks(RecordingHooks):
+    def __init__(self, fail_for: int):
+        super().__init__()
+        self.fail_for = fail_for
+
+    def lock(self, conn, game_id, now):
+        if game_id == self.fail_for:
+            raise RuntimeError("model error")
+        super().lock(conn, game_id, now)
+
+
+@pytest.mark.db
+def test_espn_down_at_lock_time_still_locks(db, jobs, tmp_path):
+    first = add_game(db, "900", NOW + timedelta(minutes=20), "scheduled")
+    second = add_game(db, "904", NOW + timedelta(minutes=25), "scheduled")
+    down = jobs_with(db, tmp_path, lambda request: httpx.Response(503))
+
+    details = down.game_watcher(NOW)
+
+    assert sorted(down.hooks.locked) == sorted([first, second])
+    assert details["locked"] == 2
+    assert any(e.startswith("pregame line") for e in details["errors"])
+    assert any(e.startswith("scoreboard") for e in details["errors"])
+
+
+@pytest.mark.db
+def test_one_failing_lock_does_not_skip_the_others(db, jobs, tmp_path):
+    first = add_game(db, "900", NOW + timedelta(minutes=20), "scheduled")
+    second = add_game(db, "904", NOW + timedelta(minutes=25), "scheduled")
+    j = jobs_with(db, tmp_path, fake_espn, hooks=FailingLockHooks(fail_for=first))
+    details = j.game_watcher(NOW)
+    assert j.hooks.locked == [second] and details["locked"] == 1
+    assert any(e.startswith(f"lock {first}") for e in details["errors"])
+
+
+@pytest.mark.db
+def test_one_bad_final_does_not_block_the_rest(db, jobs, tmp_path):
+    bad = add_game(db, "401000001", NOW - timedelta(hours=4), "final")
+    good = add_game(db, "401811026", NOW - timedelta(hours=3), "final")
+    bad_fetches = []
+
+    def transport(request):
+        if request.url.path.endswith("/summary") and request.url.params.get("event") == "401000001":
+            bad_fetches.append(1)
+            return httpx.Response(404)
+        return fake_espn(request)
+
+    j = jobs_with(db, tmp_path, transport)
+    for minute in range(5):
+        details = j.game_watcher(NOW + timedelta(minutes=minute))
+        if minute == 0:
+            assert details["finished"] == 1
+            assert any(e.startswith("final 401000001") for e in details["errors"])
+    assert j.hooks.finished == [good]                    # graded once, despite the bad game
+    assert len(bad_fetches) == 3 and j.load_failures[bad] == 3   # then left for overnight
+
+    overnight = j.overnight(NOW + timedelta(hours=8))
+    assert len(bad_fetches) == 4 and j.load_failures == {}
+    assert any(e.startswith("reload 401000001") for e in overnight["errors"])
+
+
+@pytest.mark.db
+def test_worker_stops_when_the_database_connection_is_lost(db):
+    import os
+    from types import SimpleNamespace
+
+    import psycopg
+
+    from hoops.worker import make_job
+
+    conn = psycopg.connect(os.environ["HOOPS_TEST_DATABASE_URL"], autocommit=True)
+    stopped = []
+    job = make_job(SimpleNamespace(conn=conn, league=League.NBA), "demo", lambda: {"ok": 1},
+                   lambda: stopped.append(1))
+    job()
+    assert stopped == []
+    db.execute("SELECT pg_terminate_backend(%s)", (conn.info.backend_pid,))   # DB restart
+    job()
+    assert stopped == [1]

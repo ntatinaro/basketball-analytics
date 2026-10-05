@@ -37,7 +37,7 @@ systemctl --user daemon-reload
 step "Starting the database and applying migrations"
 systemctl --user start hoops-postgres.service
 for _ in $(seq 1 30); do
-  podman exec hoops-postgres pg_isready -U hoops -q && break
+  podman exec hoops-postgres pg_isready -h localhost -U hoops -q && break
   sleep 2
 done
 podman run --rm --network hoops --env-file "$CONFIG/hoops.env" localhost/hoops-backend:latest migrate
@@ -49,7 +49,8 @@ if podman image exists localhost/hoops-web:latest; then
 fi
 # shellcheck disable=SC2086
 systemctl --user restart $services
-podman image prune -f >/dev/null
+# Only this app's images (labelled in the Containerfiles); never other projects'.
+podman image prune -f --filter label=org.hoops.app=hoops >/dev/null
 
 step "Status"
 # shellcheck disable=SC2086
