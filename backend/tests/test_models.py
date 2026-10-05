@@ -198,3 +198,19 @@ def test_candidates_are_stable_and_unique():
     assert [s.version for s in a] == [s.version for s in b]
     assert len({s.version for s in a}) == len(a)
     assert a[0] == DEFAULT
+
+
+def test_exam_report_without_market_lines():
+    from hoops.evaluation.exams import target_check
+    from hoops.evaluation.report import format_exam_report
+
+    assert target_check(None, None) is None
+    summary = {"games": 10, "log_loss": 0.65, "brier": 0.23, "accuracy": 0.6,
+               "margin_mae": 10.0, "total_mae": 15.0}
+    report = {"league": "nba", "candidates": 2, "champion": {
+        "members": [{}], "blend": False, "tuning": summary}, "rounds": [{
+            "round": 1, "tuning_seasons": [2023], "exam_season": 2024, "winner": "a",
+            "blend": False, "tuning": summary, "exam": summary | {
+                "target": None, "benchmarks": {"naive": summary, "without_roster_start": summary,
+                                               "market": None, "model_on_market_games": None}}}]}
+    assert "no betting lines" in format_exam_report(report)

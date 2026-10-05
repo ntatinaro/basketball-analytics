@@ -44,6 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reload", action="store_true",
                    help="re-process games already loaded (from the raw cache)")
 
+    p = sub.add_parser("close-lines", help="load ESPN closing lines for past seasons")
+    p.add_argument("--league", type=League, choices=list(League), required=True)
+    p.add_argument("--seasons", type=parse_seasons, required=True)
+
     p = sub.add_parser("quality-report", help="print the per-season data quality report")
     p.add_argument("--league", type=League, choices=list(League), required=True)
 
@@ -134,6 +138,10 @@ def main(argv: list[str] | None = None) -> None:
                 loaded, failed = loader.backfill(season, reload=args.reload)
                 print(f"{args.league} {season}: {loaded} games loaded, {failed} failed")
             refresh_screen_tables(conn)
+        elif args.command == "close-lines":
+            for season in args.seasons:
+                found = loader.backfill_close_lines(season)
+                print(f"{args.league} {season}: closing lines for {found} games")
         elif args.command == "sync-rosters":
             print(f"{loader.sync_rosters(args.season)} roster entries")
         elif args.command == "sync-day":

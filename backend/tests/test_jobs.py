@@ -55,6 +55,8 @@ def fake_espn(request: httpx.Request) -> httpx.Response:
     if path.endswith("/injuries"):
         return httpx.Response(200, json=load("nba_injuries.json.gz"))
     if path.endswith("/odds"):
+        if "/events/401704835/" in path:
+            return httpx.Response(200, json=load("nba_odds_2025.json.gz"))
         return httpx.Response(200, json={"items": []})
     return httpx.Response(200, json={"events": []})   # scoreboards: nothing new
 
@@ -127,3 +129,13 @@ def test_run_logged_records_success_and_failure(db):
     assert rows[0][:2] == ("succeeded", {"n": 3})
     assert rows[1][0] == "failed" and "ESPN down" in rows[1][2]
     assert last_success(db, "demo", "nba") is not None
+
+
+def test_close_line_backfill_fills_only_missing_finals(db, jobs):
+    with_odds = add_game(db, "401704835", NOW - timedelta(days=3), "final")
+    add_game(db, "401704836", NOW - timedelta(days=3), "final")        # no odds at ESPN
+    add_game(db, "401704837", NOW + timedelta(days=1), "scheduled")
+    assert jobs.loader.backfill_close_lines(2026) == 1
+    rows = db.execute("SELECT game_id, line_kind, home_moneyline FROM betting_lines").fetchall()
+    assert rows == [(with_odds, "espn_close", 130)]
+    assert jobs.loader.backfill_close_lines(2026) == 0                # already stored

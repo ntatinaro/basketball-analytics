@@ -137,7 +137,40 @@ class Loader:
             if i % 200 == 0:
                 log.info("%s %d: %d/%d games", self.league, season, i, len(pending))
         log.info("%s %d: %d games loaded, %d failed", self.league, season, loaded, failed)
+        self.backfill_close_lines(season)
         return loaded, failed
+
+    def backfill_close_lines(self, season: int) -> int:
+        """Stores ESPN's labeled closing lines for finished games that have none. Game
+        summaries often carry no odds for past seasons; the odds endpoint does."""
+        pending = self.conn.execute(
+            """
+            SELECT g.game_id, g.espn_id FROM games g
+            WHERE g.league = %s AND g.season = %s AND g.status = 'final'
+              AND g.season_type <> 'pre'
+              AND NOT EXISTS (SELECT 1 FROM betting_lines b
+                              WHERE b.game_id = g.game_id AND b.line_kind = 'espn_close')
+            ORDER BY g.start_time
+            """,
+            (str(self.league), season),
+        ).fetchall()
+        found = 0
+        for i, (game_id, espn_id) in enumerate(pending, 1):
+            try:
+                raw = self.client.odds(self.league, espn_id, use_cache=True)
+            except EspnError as exc:
+                log.info("%s game %s: no odds (%s)", self.league, espn_id, exc)
+                continue
+            lines = parse.parse_close_lines(raw.body)
+            for line in lines:
+                self.store.write_line(game_id, line, "espn_close", raw.fetched_at)
+            found += bool(lines)
+            if i % 200 == 0:
+                log.info("%s %d: closing lines %d/%d games", self.league, season, i,
+                         len(pending))
+        log.info("%s %d: closing lines for %d of %d games", self.league, season, found,
+                 len(pending))
+        return found
 
     def sync_injuries(self) -> int:
         injuries = parse.parse_injuries(self.client.injuries(self.league).body)

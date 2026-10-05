@@ -162,7 +162,7 @@ class EspnClient:
         url = SITE.format(slug=self._slug(league)) + "/injuries"
         return self.get(league, "injuries", url)
 
-    def odds(self, league: League, event_id: str) -> RawResponse:
+    def odds(self, league: League, event_id: str, *, use_cache: bool = False) -> RawResponse:
         url = (CORE.format(slug=self._slug(league))
                + f"/events/{event_id}/competitions/{event_id}/odds")
-        return self.get(league, "odds", url, {"event": event_id})
+        return self.get(league, "odds", url, {"event": event_id}, use_cache=use_cache)

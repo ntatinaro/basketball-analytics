@@ -143,17 +143,21 @@ def benchmarks(lab: Lab, exam: pd.DataFrame, tuning_preds: pd.DataFrame,
     naive = metrics.summary(np.full(len(exam), home_rate), exam["home_won"])
     with_market = exam[exam["game_id"].isin(lab.market)]
     market_prob = with_market["game_id"].map(lab.market)
+    has_market = len(with_market) > 0
     return {
         "naive": naive,
         "without_roster_start": metrics.summary(no_roster["prob"], no_roster["home_won"]),
-        "market": metrics.summary(market_prob, with_market["home_won"]),
-        "model_on_market_games": metrics.summary(with_market["prob"], with_market["home_won"]),
+        "market": metrics.summary(market_prob, with_market["home_won"]) if has_market else None,
+        "model_on_market_games": (metrics.summary(with_market["prob"], with_market["home_won"])
+                                  if has_market else None),
     }
 
 
-def target_check(model_on_market: dict, market: dict) -> dict:
+def target_check(model_on_market: dict | None, market: dict | None) -> dict | None:
     """The owner's accuracy target: within 1.5 points of market accuracy and 0.01 of its
-    log loss."""
+    log loss. None when no game in the exam has a betting line."""
+    if model_on_market is None or market is None:
+        return None
     acc_gap = market["accuracy"] - model_on_market["accuracy"]
     loss_gap = model_on_market["log_loss"] - market["log_loss"]
     return {"accuracy_gap": acc_gap, "log_loss_gap": loss_gap,
@@ -191,8 +195,9 @@ def run_exams(conn: psycopg.Connection, league: League, warmup: int, scored: lis
             "winner_settings": [m.to_json() for m in choice.members],
             "tuning": choice.tuning, "exam": exam_metrics,
         })
-        log.info("round %d: winner %s, exam log loss %.4f (market %.4f)", round_no,
-                 choice.label, exam_metrics["log_loss"], bench["market"]["log_loss"])
+        log.info("round %d: winner %s, exam log loss %.4f (market %s)", round_no,
+                 choice.label, exam_metrics["log_loss"],
+                 f"{bench['market']['log_loss']:.4f}" if bench["market"] else "none")
 
     champion, _ = choose(lab, pool, scored)
     champion_preds = predict_choice(lab, champion, scored)

@@ -108,3 +108,12 @@ def test_standings_conferences_and_roster():
     roster = parse.parse_roster(load("nba_roster_bos.json.gz"))
     assert roster and all(r.height_inches for r in roster)
     assert all(isinstance(r.birth_date, datetime) for r in roster if r.birth_date)
+
+
+def test_close_lines_from_odds_endpoint_skip_live_odds():
+    # Game 401704835 (2024-25): the summary has no odds; the odds endpoint has the close.
+    lines = parse.parse_close_lines(load("nba_odds_2025.json.gz"))
+    assert len(lines) == 1                       # the in-game "Live Odds" entry is skipped
+    line = lines[0]
+    assert (line.provider, line.spread_home, line.total) == ("ESPN BET", 3.5, 229.5)
+    assert (line.home_moneyline, line.away_moneyline) == (130, -155)
