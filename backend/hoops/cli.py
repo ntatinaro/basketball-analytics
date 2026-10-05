@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from datetime import date
 
@@ -51,6 +52,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("worker", help="run the background worker (all scheduled jobs)")
 
+    p = sub.add_parser("exams", help="run rolling exams and choose the champion model")
+    p.add_argument("--league", type=League, choices=list(League), required=True)
+    p.add_argument("--warmup", type=int, required=True, help="warm-up season, e.g. 2022")
+    p.add_argument("--seasons", type=parse_seasons, required=True,
+                   help="scored seasons, e.g. 2023-2026")
+    p.add_argument("--candidates", type=int, default=40)
+    p.add_argument("--report", type=str, help="also write the full report to this JSON file")
+
+    p = sub.add_parser("refresh-predictions", help="refit ratings and predict upcoming games")
+    p.add_argument("--league", type=League, choices=list(League), required=True)
+
     p = sub.add_parser("sync-day", help="refresh one day's games from the scoreboard")
     p.add_argument("--league", type=League, choices=list(League), required=True)
     p.add_argument("--date", type=date.fromisoformat, default=date.today())
@@ -78,6 +90,23 @@ def main(argv: list[str] | None = None) -> None:
             return
         if args.command == "quality-report":
             print(format_report(conn, args.league))
+            return
+        if args.command == "exams":
+            from hoops.evaluation.exams import run_exams
+            from hoops.evaluation.report import format_exam_report
+
+            report = run_exams(conn, args.league, args.warmup, args.seasons, args.candidates)
+            if args.report:
+                with open(args.report, "w") as f:
+                    json.dump(report, f, indent=2, default=str)
+            print(format_exam_report(report))
+            return
+        if args.command == "refresh-predictions":
+            from hoops.models.live import ModelHooks
+
+            hooks = ModelHooks(args.league, rehearsal=settings.rehearsal)
+            hooks.refit(conn)
+            print(f"{hooks.refresh(conn)} predictions written")
             return
 
         loader = Loader(conn, EspnClient(RawStore(settings.raw_dir)), args.league)

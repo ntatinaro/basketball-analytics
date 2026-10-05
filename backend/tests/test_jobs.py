@@ -42,6 +42,9 @@ class RecordingHooks:
     def overnight(self, conn, league):
         pass
 
+    def refresh(self, conn, league):
+        return 0
+
 
 def fake_espn(request: httpx.Request) -> httpx.Response:
     path = request.url.path

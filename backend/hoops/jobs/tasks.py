@@ -44,6 +44,8 @@ class GameHooks(Protocol):
 
     def overnight(self, conn: psycopg.Connection, league: League) -> None: ...
 
+    def refresh(self, conn: psycopg.Connection, league: League) -> int: ...
+
 
 class NoModelHooks:
     """Used until models are attached: data jobs still run."""
@@ -59,6 +61,9 @@ class NoModelHooks:
 
     def overnight(self, conn, league) -> None:
         pass
+
+    def refresh(self, conn, league) -> int:
+        return 0
 
 
 @dataclass
@@ -90,7 +95,8 @@ class Jobs:
         games = 0
         for offset in range(-2, 8):
             games += len(self.loader.sync_day(today + timedelta(days=offset)))
-        return {"games": games}
+        predicted = self.hooks.refresh(self.conn, self.league)
+        return {"games": games, "predictions_written": predicted}
 
     def daily_reference_sync(self, now: datetime | None = None) -> dict:
         now = now or datetime.now(UTC)

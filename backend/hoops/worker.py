@@ -18,8 +18,9 @@ from hoops.espn.client import EspnClient
 from hoops.espn.raw_store import RawStore
 from hoops.ingest.load import Loader
 from hoops.jobs.runs import run_logged
-from hoops.jobs.tasks import GameHooks, Jobs, NoModelHooks
+from hoops.jobs.tasks import GameHooks, Jobs
 from hoops.leagues import League
+from hoops.models.live import ModelHooks
 from hoops.settings import Settings
 
 log = logging.getLogger(__name__)
@@ -31,8 +32,8 @@ def build_jobs(settings: Settings, league: League, hooks: GameHooks) -> Jobs:
     return Jobs(loader=loader, hooks=hooks, rehearsal=settings.rehearsal)
 
 
-def make_hooks(league: League) -> GameHooks:
-    return NoModelHooks()
+def make_hooks(league: League, rehearsal: bool) -> GameHooks:
+    return ModelHooks(league, rehearsal=rehearsal)
 
 
 def run(settings: Settings) -> None:
@@ -47,7 +48,7 @@ def run(settings: Settings) -> None:
         timezone="America/New_York",
     )
     for league in settings.leagues:
-        jobs = build_jobs(settings, league, make_hooks(league))
+        jobs = build_jobs(settings, league, make_hooks(league, settings.rehearsal))
 
         def logged(name: str, fn: Callable[[], dict], jobs: Jobs = jobs) -> Callable[[], bool]:
             return lambda: run_logged(jobs.conn, name, str(jobs.league), fn)
