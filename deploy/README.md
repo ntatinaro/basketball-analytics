@@ -100,6 +100,10 @@ Run these as the user that will own the app (not root).
 | Database shell | `podman exec -it hoops-postgres psql -U hoops` |
 | Restart everything | `systemctl --user restart hoops-api hoops-worker hoops-web` |
 
+## Admin panel
+
+Set `HOOPS_ADMIN_PASSWORD` and `HOOPS_SECRET_KEY` (for example `openssl rand -hex 32`) in `deploy/.env` and deploy. The panel is at `https://hoops.<your domain>/nba/admin`: data health, data quality, models, and NCAA absences. Leave the password empty to switch it off.
+
 ## Dress rehearsal mode
 
 Before opening night, set `HOOPS_REHEARSAL=1` in `deploy/.env` and run `./deploy/deploy.sh`. Preseason games then get predictions, locks, and grades, marked as rehearsal and never shown in public grading. Set it back to `0` and deploy again before the regular season starts.

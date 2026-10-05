@@ -195,12 +195,12 @@ Done when: projections are graded on real games and shown next to actuals.
 
 Depends on: V1.
 
-- [ ] Admin login (single owner account; password from `.env`).
-- [ ] Data health: last successful pull per job, job history, failures.
-- [ ] Data quality: per-season reports and flagged games.
-- [ ] Model management (view only): model versions and settings, champion and challengers, rolling exam results per round and candidate, live accuracy against the target, training history.
-- [ ] NCAA absences entry (used from V4).
-- [ ] Shadow models: challengers predict every game quietly and are graded; monthly checkpoint rule (a challenger replaces the champion only if clearly better); switches noted on the report card.
+- [x] Admin login (single owner account; password from `.env`).
+- [x] Data health: last successful pull per job, job history, failures.
+- [x] Data quality: per-season reports and flagged games.
+- [x] Model management (view only): model versions and settings, champion and challengers, rolling exam results per round and candidate, live accuracy against the target, training history.
+- [x] NCAA absences entry (used from V4).
+- [x] Shadow models: challengers predict every game quietly and are graded; monthly checkpoint rule (a challenger replaces the champion only if clearly better); switches noted on the report card.
 - [ ] Close the log-loss gap to the market (about 0.02 after V1's exams; target 0.01): try challengers that use player availability and player values game by game, not only in the starting rating.
 - [ ] Backtest with the real injury snapshots collected since launch (V1's backtests use who actually played, which is more than live predictions know), and compare with the exams' honest floor (absences ignored).
 
