@@ -54,15 +54,16 @@ def run(settings: Settings) -> None:
             return lambda: run_logged(jobs.conn, name, str(jobs.league), fn)
 
         scheduler.add_job(logged("reference_sync", jobs.daily_reference_sync), "cron",
-                          hour=6, minute=5, id=f"{league}-reference")
+                          hour=6, minute=5, id=f"{league}-reference", name=f"{league}-reference")
         scheduler.add_job(logged("schedule_sync", jobs.schedule_sync), "interval", hours=3,
-                          next_run_time=datetime.now(UTC), id=f"{league}-schedule")
+                          next_run_time=datetime.now(UTC), id=f"{league}-schedule",
+                          name=f"{league}-schedule")
         scheduler.add_job(logged("injury_sync", jobs.injury_sync), "interval", minutes=15,
-                          id=f"{league}-injuries")
+                          id=f"{league}-injuries", name=f"{league}-injuries")
         scheduler.add_job(logged("game_watcher", jobs.game_watcher), "interval", minutes=1,
-                          id=f"{league}-watcher")
+                          id=f"{league}-watcher", name=f"{league}-watcher")
         scheduler.add_job(logged("overnight", jobs.overnight), "cron", hour=4, minute=15,
-                          id=f"{league}-overnight")
+                          id=f"{league}-overnight", name=f"{league}-overnight")
     log.info("worker started for %s (rehearsal=%s)",
              ", ".join(map(str, settings.leagues)), settings.rehearsal)
     scheduler.start()
