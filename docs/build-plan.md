@@ -181,13 +181,13 @@ Done when: opening-night predictions are locked and graded automatically, and th
 
 Depends on: V1.
 
-- [ ] Minutes model (role, absences, blowout risk from the predicted margin).
-- [ ] Per-minute rates shrunk toward average; adjusted for opponent, pace, rest, and absent teammates.
-- [ ] Every box-score stat projected with a range; plus/minus excluded.
-- [ ] Rolling exam for projections; record in model management tables.
-- [ ] `player_projections` table; worker produces projections with each prediction.
-- [ ] API: `GET /api/nba/games/{id}/projections`.
-- [ ] Website: game page Projections tab (projections before the game, projected vs. actual during and after); projected vs. actual in the player game log; five stats by default, the rest under "full projection".
+- [x] Minutes model (role, absences, blowout risk from the predicted margin).
+- [x] Per-minute rates shrunk toward average; adjusted for opponent, pace, rest, and absent teammates.
+- [x] Every box-score stat projected with a range; plus/minus excluded.
+- [x] Rolling exam for projections; record in model management tables.
+- [x] `player_projections` table; worker produces projections with each prediction.
+- [x] API: `GET /api/nba/games/{id}/projections`.
+- [x] Website: game page Projections tab (projections before the game, projected vs. actual during and after); projected vs. actual in the player game log; five stats by default, the rest under "full projection".
 
 Done when: projections are graded on real games and shown next to actuals.
 

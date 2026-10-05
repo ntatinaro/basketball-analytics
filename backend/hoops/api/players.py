@@ -8,8 +8,16 @@ import numpy as np
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from hoops.api.deps import cached, get_conn, parse_league, resolve_season, teams_for_season
+from hoops.api.deps import (
+    cached,
+    get_conn,
+    parse_league,
+    rehearsal,
+    resolve_season,
+    teams_for_season,
+)
 from hoops.leagues import League
+from hoops.models.projections import HEADLINE
 
 router = APIRouter()
 
@@ -181,13 +189,20 @@ def _game_log(conn, player_id: int, season: int) -> list[dict]:
                g.away_team_id, g.home_score, g.away_score, s.starter, s.did_not_play,
                s.dnp_reason, s.minutes, s.pts, s.fgm, s.fga, s.fg3m, s.fg3a, s.ftm, s.fta,
                s.oreb, s.dreb, s.reb, s.ast, s.stl, s.blk, s.tov, s.pf, s.plus_minus,
-               ht.abbreviation AS home_abbr, at.abbreviation AS away_abbr
+               ht.abbreviation AS home_abbr, at.abbreviation AS away_abbr,
+               pr.stats AS projected
         FROM player_game_stats s JOIN games g USING (game_id)
         JOIN teams ht ON ht.team_id = g.home_team_id JOIN teams at ON at.team_id = g.away_team_id
+        LEFT JOIN LATERAL (       -- the locked projection (the graded one), else the latest
+            SELECT pp.stats FROM projection_sets ps JOIN player_projections pp
+                USING (projection_set_id)
+            WHERE ps.game_id = g.game_id AND pp.player_id = s.player_id
+              AND (%s OR NOT ps.is_rehearsal)
+            ORDER BY ps.is_locked DESC, ps.created_at DESC LIMIT 1) pr ON true
         WHERE s.player_id = %s AND g.season = %s AND g.status = 'final'
         ORDER BY g.start_time
         """,
-        (player_id, season),
+        (rehearsal(), player_id, season),
     ).fetchall()
     out = []
     for r in rows:
@@ -203,7 +218,9 @@ def _game_log(conn, player_id: int, season: int) -> list[dict]:
             **{k: r[k] for k in ("minutes", "pts", "fgm", "fga", "fg3m", "fg3a", "ftm", "fta",
                                  "oreb", "dreb", "reb", "ast", "stl", "blk", "tov", "pf",
                                  "plus_minus")},
-            "projection": None,     # single-game projections arrive in V1.1
+            # Projected expected values for the headline stats (V1.1), next to the actuals.
+            "projection": ({s: r["projected"][s][0] for s in HEADLINE if s in r["projected"]}
+                           if r["projected"] else None),
         })
     return out
 

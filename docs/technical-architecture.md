@@ -174,7 +174,9 @@ Postgres. ESPN IDs are stored directly on teams, players, and games (no crosswal
 | Operations | `job_runs`, `data_quality_issues` | Data freshness, job history, quality reports |
 | Backtests | `backtest_predictions` | The champion's walk-forward predictions for past seasons. Feeds the report card's backtest section and fills predictions on past game pages. |
 
-**Added in later versions:** `player_projections`, admin login, `manual_absences`, shadow predictions (V1.1); `live_states`, `live_win_prob` (ours and ESPN's), `insights` (V2); `player_impact`, `lineup_stats`, `shot_quality`, `play_style`, `sim_runs`, `sim_results` (V3); `field_projection`, `brackets`, `bracket_sim_results` (V5).
+| Player projections (V1.1) | `projection_sets`, `player_projections`, `projection_grades` | Append-only like `predictions`: a new set when anything changes, locked with the prediction 30 minutes before tip-off; the locked set is graded after the game (mean error per stat, share inside the range). |
+
+**Added in later versions:** admin login, `manual_absences`, shadow predictions (V1.1); `live_states`, `live_win_prob` (ours and ESPN's), `insights` (V2); `player_impact`, `lineup_stats`, `shot_quality`, `play_style`, `sim_runs`, `sim_results` (V3); `field_projection`, `brackets`, `bracket_sim_results` (V5).
 
 ## 8. Data quality gate
 
@@ -229,7 +231,7 @@ Every model has a version string, and outputs record the version that produced t
 
 | Version | Model | Method |
 | --- | --- | --- |
-| V1.1 | Single-game player projections | Minutes model times per-minute rates, shrunk toward average for small samples, adjusted for opponent, pace, rest, and absent teammates |
+| V1.1 | Single-game player projections | Minutes model times per-minute rates, shrunk toward average for small samples, adjusted for opponent, pace, rest, and absent teammates. As built: minutes are recency weighted from last season's minutes per game; each team's available players share 241 minutes, absent teammates' minutes going to them and surplus minutes coming off the deep bench first; starters lose minutes when a blowout is likely. Live, each player's minutes are weighted by his chance of playing (his appearance rate, starting from a guess based on last season's minutes), since who plays is not known before the game. Scoring stats scale with the team's predicted points, other stats with the predicted pace. 10th to 90th percentile ranges are fitted on past seasons and calibrated so that, shown as whole numbers, they hold 80% of results. Rolling exams pick the settings; projections beat players' season averages by about 5.5% (minutes about 13%, points about 5%). |
 | V2 | Live win probability | Trained on past play-by-play: score difference, time remaining, possession, pregame win probability, foul and bonus state. Calibrated. One model per league. |
 | V2 | Insight detectors | Rules with significance thresholds; developing events update their card in place |
 | V3 | Player impact | Regularized adjusted plus-minus over stints, with a box-score prior. Replaces box-score values in starting ratings and absences. |

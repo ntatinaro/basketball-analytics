@@ -59,6 +59,7 @@ class ProjectionSettings:
     team_share: float = 0.5        # 0 = add up players as they are, 1 = match team totals
     b2b_minutes: float = 0.97      # minutes multiplier on back-to-backs (30+ mpg players)
     minutes_power: float = 1.0     # how strongly absent teammates' minutes go to regulars
+    bench_first: float = 0.0       # 1 = too many available minutes come off the bench first
 
     def to_json(self) -> dict:
         return asdict(self)
@@ -72,7 +73,7 @@ class ProjectionSettings:
     def complexity(self) -> int:
         """Number of adjustments in use (ties go to the simpler setting)."""
         return (int(self.blowout > 0) + int(self.team_share > 0) + int(self.b2b_minutes < 1)
-                + int(self.minutes_power != 1))
+                + int(self.minutes_power != 1) + int(self.bench_first > 0))
 
 
 GRID = {
@@ -83,6 +84,7 @@ GRID = {
     "team_share": [0.0, 0.5, 1.0],
     "b2b_minutes": [1.0, 0.97],
     "minutes_power": [1.0, 1.5, 2.0],
+    "bench_first": [0.0, 1.0],
 }
 
 
@@ -237,15 +239,23 @@ class History:
 # -- projecting --------------------------------------------------------------------------
 
 
-def _scale_minutes(base: pd.Series, keys: list[pd.Series], power: float = 1.0) -> np.ndarray:
+def _scale_minutes(base: pd.Series, keys: list[pd.Series], power: float = 1.0,
+                   bench_first: bool = False) -> np.ndarray:
     """Brings each team's minutes to TEAM_MINUTES. Missing minutes (teammates out) go to
     players in proportion to minutes ** power, so with power > 1 the regulars absorb more of
-    them; surplus minutes are taken back in proportion to minutes. Capped at MAX_MINUTES."""
+    them. Surplus minutes (more players available than the rotation holds) are taken back in
+    proportion to minutes, or, with `bench_first`, in proportion to the minutes a player is
+    short of a full game, squared, so the deep bench gives up its minutes first, as coaches
+    shorten the rotation. Capped at MAX_MINUTES."""
     m = base.to_numpy(dtype=float).copy()
-    for _ in range(4):
+    for _ in range(8):
         series = pd.Series(m, index=base.index)
         gap = TEAM_MINUTES - series.groupby(keys).transform("sum").to_numpy()
-        weight = np.where(gap > 0, np.power(m, power), m) * (m < MAX_MINUTES)
+        if bench_first:
+            surplus_weight = np.square(MAX_MINUTES - m) * (m > 0)
+        else:
+            surplus_weight = m * (m < MAX_MINUTES)
+        weight = np.where(gap > 0, np.power(m, power) * (m < MAX_MINUTES), surplus_weight)
         total = pd.Series(weight, index=base.index).groupby(keys).transform("sum").to_numpy()
         with np.errstate(divide="ignore", invalid="ignore"):
             share = np.where(total > 0, weight / total, 0.0)
@@ -267,7 +277,7 @@ def project(inputs: pd.DataFrame, settings: ProjectionSettings) -> pd.DataFrame:
     base = base * np.where(starter, np.clip(blowout, 0.5, 1.0), 1.0)
     heavy = (base >= HEAVY_MINUTES) & (inputs["b2b"] > 0)
     base = base * np.where(heavy, settings.b2b_minutes, 1.0)
-    minutes = _scale_minutes(base, keys, settings.minutes_power)
+    minutes = _scale_minutes(base, keys, settings.minutes_power, settings.bench_first > 0)
 
     out = inputs[["game_id", "team_id", "player_id"]].copy()
     out["minutes"] = minutes

@@ -177,3 +177,16 @@ def test_candidates_are_unique_and_include_the_defaults():
     pool = candidates(20)
     assert pool[0] == ProjectionSettings()
     assert len({s.version for s in pool}) == len(pool) == 20
+
+
+def test_bench_first_keeps_regulars_minutes_when_the_roster_is_crowded():
+    h, rotation = history_with_games()
+    inputs = inputs_for(h, list(rotation) + [901, 902, 903, 904, 905])  # five extra players
+    inputs.loc[inputs["player_id"] > 900, "prior_mpg"] = 20.0          # all looked useful
+    even = project(inputs, ProjectionSettings(blowout=0.0, bench_first=0.0)).set_index(
+        "player_id")["minutes"]
+    bench = project(inputs, ProjectionSettings(blowout=0.0, bench_first=1.0)).set_index(
+        "player_id")["minutes"]
+    assert even.sum() == pytest.approx(TEAM_MINUTES, abs=0.5)
+    assert bench.sum() == pytest.approx(TEAM_MINUTES, abs=0.5)
+    assert bench[1] > even[1] and bench[905] < even[905]

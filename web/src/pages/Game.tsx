@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, type Absence, type BoxPlayer, type GameDetail } from "../api";
+import { api, type Absence, type BoxPlayer, type GameDetail, type GameProjections } from "../api";
+import { ProjectionsTab } from "../components/Projections";
 import { favoredText, fixed, longDate, pct, rangeText, signed, tipTime } from "../format";
 import { Empty, ErrorNote, Loading, ProbBar, Tabs, TeamLogo, useLeague } from "../components/ui";
 
-type Tab = "preview" | "box";
+type Tab = "preview" | "box" | "projections";
 
 export function GamePage() {
   const league = useLeague();
@@ -16,11 +17,18 @@ export function GamePage() {
     refetchInterval: 60_000,
   });
   const [tab, setTab] = useState<Tab | null>(null);
+  const projections = useQuery({
+    queryKey: ["projections", league, id],
+    queryFn: () => api<GameProjections>(`${league}/games/${id}/projections`),
+    enabled: league === "nba",
+    refetchInterval: 60_000,
+  });
   if (game.isLoading) return <main className="page"><Loading what="Loading game" /></main>;
   if (game.error || !game.data) return <main className="page"><ErrorNote error={game.error} /></main>;
   const g = game.data;
   const tabs: [Tab, string][] = [["preview", "Preview"]];
   if (g.box_score) tabs.push(["box", "Box score"]);
+  if (projections.data?.available) tabs.push(["projections", "Projections"]);
   // A live game opens on its running box score until the Live tab arrives (V2).
   const opensOnBox = (g.default_tab === "box" || g.default_tab === "live") && !!g.box_score;
   const active: Tab = tab ?? (opensOnBox ? "box" : "preview");
@@ -45,7 +53,9 @@ export function GamePage() {
         ))}
       </div>
       <Tabs tabs={tabs} value={active} onChange={setTab} />
-      {active === "preview" ? <Preview game={g} /> : <BoxScore game={g} />}
+      {active === "preview" ? <Preview game={g} />
+        : active === "projections" ? <ProjectionsTab game={g} data={projections.data} />
+        : <BoxScore game={g} />}
     </main>
   );
 }

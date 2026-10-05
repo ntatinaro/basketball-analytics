@@ -12,6 +12,7 @@ CREATE TABLE projection_sets (
     inputs_hash       text NOT NULL
 );
 CREATE INDEX projection_sets_game_idx ON projection_sets (game_id, created_at DESC);
+CREATE INDEX projection_sets_created_idx ON projection_sets (created_at);   -- API data version
 CREATE UNIQUE INDEX projection_sets_one_lock_idx
     ON projection_sets (game_id) WHERE is_locked AND NOT is_rehearsal;
 
@@ -50,3 +51,4 @@ CREATE TABLE projection_grades (
     players           integer NOT NULL,
     metrics           jsonb NOT NULL
 );
+CREATE INDEX projection_grades_graded_idx ON projection_grades (graded_at);   -- API data version

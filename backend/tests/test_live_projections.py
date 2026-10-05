@@ -125,3 +125,48 @@ def test_projection_failures_never_block_predictions(db, league, monkeypatch):  
     assert hooks.refresh(db, now=NOW) == 1
     assert db.execute("SELECT count(*) FROM predictions WHERE game_id = %s",
                       (game_id,)).fetchone()[0] == 1
+
+
+def test_projections_api_and_game_log(db, league, monkeypatch):  # noqa: F811
+    import os
+
+    from fastapi.testclient import TestClient
+
+    from hoops.api import deps
+    from hoops.api.app import app
+
+    players = add_players(db, league)
+    hooks = ModelHooks(League.NBA)
+    game_id = add_upcoming(db, league, 20)
+    hooks.lock(db, game_id, NOW)
+    db.execute("UPDATE games SET status = 'final', home_score = 110, away_score = 100"
+               " WHERE game_id = %s", (game_id,))
+    star = players[league[1]][0]
+    db.execute(f"""
+        INSERT INTO player_game_stats (game_id, player_id, team_id, starter, did_not_play,
+            minutes, reb, {STATS})
+        VALUES (%s, %s, %s, true, false, 36, 9, 31, 11, 20, 3, 7, 6, 7, 2, 7, 5, 1, 1, 2, 3)
+    """, (game_id, star, league[1]))
+
+    monkeypatch.setenv("HOOPS_DATABASE_URL", os.environ["HOOPS_TEST_DATABASE_URL"])
+    deps._pool = None
+    deps.clear_cache()
+    with TestClient(app) as client:
+        body = client.get(f"/api/nba/games/{game_id}/projections").json()
+        assert body["available"] and body["locked"] and not body["updated_after_lock"]
+        home = body["teams"]["home"]
+        assert len(home) == 8 and set(body["headline"]) <= set(home[0]["projection"])
+        row = next(p for p in home if p["player_id"] == star)
+        assert row["actual"]["pts"] == 31
+        low, high = row["projection"]["pts"]["low"], row["projection"]["pts"]["high"]
+        assert low <= row["projection"]["pts"]["expected"] <= high
+        others = [p for p in home if p["player_id"] != star]
+        assert all(p["actual"] is None for p in others)       # no box score row yet
+
+        log = client.get(f"/api/nba/players/{star}", params={"season": 2026}).json()["game_log"]
+        last = next(g for g in log if g["game_id"] == game_id)
+        assert last["pts"] == 31 and last["projection"]["pts"] > 0
+
+        assert client.get("/api/nba/games/999999/projections").status_code == 404
+    deps._pool.close()
+    deps._pool = None

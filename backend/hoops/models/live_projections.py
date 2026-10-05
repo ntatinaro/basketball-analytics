@@ -228,7 +228,10 @@ def _appearances(games: pd.DataFrame, players: pd.DataFrame) -> dict[tuple[int, 
 
 def _play_chance(appearance: tuple | None, prev_mpg: float | None) -> float:
     """Chance a healthy player plays: his appearance rate this season, starting from a
-    guess based on last season's minutes."""
-    prior = 0.9 if (prev_mpg or 0) >= 20 else 0.7 if (prev_mpg or 0) >= 10 else 0.4
+    guess based on last season's minutes. Players without NBA minutes last season
+    (rookies, camp invites, two-way players) played in about a quarter of their team's
+    games in 2025-26, so they start low; the guess fades after a couple of games."""
+    mpg = prev_mpg or 0.0
+    prior = 0.95 if mpg >= 20 else 0.8 if mpg >= 10 else 0.45 if mpg > 0 else 0.3
     played, since = appearance or (0, 0)
     return (played + APPEARANCE_PRIOR_GAMES * prior) / (since + APPEARANCE_PRIOR_GAMES)

@@ -63,3 +63,25 @@ test("no sideways scrolling on the main screens", async ({ page }) => {
     expect(overflow, path).toBe(false);
   }
 });
+
+test("projections tab shows ranges for an upcoming game, when projections exist", async ({ page, request }) => {
+  const meta = await (await request.get("/api/nba/meta")).json();
+  const today = new Date().toISOString().slice(0, 10);
+  let gameId: number | undefined;
+  for (let d = 0; d < 7 && gameId === undefined; d++) {
+    const date = new Date(Date.parse(today) + d * 86_400_000).toISOString().slice(0, 10);
+    const games = (await (await request.get(`/api/nba/games?date=${date}`)).json()).games ?? [];
+    for (const g of games) {
+      const proj = await (await request.get(`/api/nba/games/${g.id}/projections`)).json();
+      if (proj.available) { gameId = g.id; break; }
+    }
+  }
+  test.skip(gameId === undefined || !meta, "no projections in this database");
+  await page.goto(`/nba/games/${gameId}`);
+  await page.getByRole("tab", { name: "Projections" }).click();
+  const table = page.locator("table").first();
+  await expect(table.getByRole("columnheader", { name: "Pts" })).toBeVisible();
+  await expect(table.locator("tbody tr").first()).toContainText(/\d+–\d+/);
+  await page.getByLabel("Full projection").check();
+  await expect(table.getByRole("columnheader", { name: "FGA" })).toBeVisible();
+});

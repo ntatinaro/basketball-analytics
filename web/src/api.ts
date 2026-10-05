@@ -181,6 +181,20 @@ export interface GameLogRow {
   oreb: number | null; dreb: number | null; reb: number | null; ast: number | null;
   stl: number | null; blk: number | null; tov: number | null; pf: number | null;
   plus_minus: number | null;
+  projection: Partial<Record<"minutes" | "pts" | "reb" | "ast" | "fg3m", number>> | null;
+}
+
+export interface StatRange { expected: number; low: number; high: number }
+export interface ProjectedPlayer {
+  player_id: number; name: string; position: string | null; headshot: string | null;
+  projection: Record<string, StatRange>;
+  actual: Record<string, number | null> | null;
+  did_not_play: boolean | null;
+}
+export interface GameProjections {
+  game_id: number; available: boolean; stats: string[]; headline: string[];
+  locked?: boolean; rehearsal?: boolean; created_at?: string; updated_after_lock?: boolean;
+  teams: { home: ProjectedPlayer[]; away: ProjectedPlayer[] };
 }
 
 export interface PlayerDetail {
