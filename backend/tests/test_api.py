@@ -177,3 +177,21 @@ def test_data_delayed_note_follows_worker_health(db):
     watcher_run(0, "succeeded")
     assert data_freshness(api_conn, League.NBA, now)["delayed"] is False
     api_conn.close()
+
+
+def test_endpoints_respond_quickly(client):
+    import time
+
+    detroit = next(t for t in client.get("/api/nba/teams").json()["teams"]
+                   if t["abbreviation"] == "DET")
+    player = client.get("/api/nba/players").json()["players"][0]
+    game = client.get("/api/nba/games", params={"date": "2026-04-10"}).json()["games"][0]
+    paths = ["/api/nba/meta", "/api/nba/games?date=2026-04-10", f"/api/nba/games/{game['id']}",
+             "/api/nba/teams", f"/api/nba/teams/{detroit['id']}", "/api/nba/players",
+             f"/api/nba/players/{player['player_id']}", "/api/nba/report-card",
+             "/api/nba/search/players?q=cade", "/api/nba/search/teams?q=pist"]
+    for path in paths:
+        client.get(path)                       # first call fills the cache
+        start = time.perf_counter()
+        assert client.get(path).status_code == 200
+        assert time.perf_counter() - start < 0.3, path
