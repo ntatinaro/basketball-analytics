@@ -52,6 +52,11 @@ def _percentiles(values: np.ndarray, higher_better: bool) -> np.ndarray:
     return 100 * (ranks - 1) / max(len(values) - 1, 1)
 
 
+def possessive(name: str) -> str:
+    """"Detroit Pistons" -> "Detroit Pistons'", "Utah Jazz" -> "Utah Jazz's"."""
+    return f"{name}'" if name.endswith("s") else f"{name}'s"
+
+
 def _ordinal(p: float) -> str:
     n = int(round(p))
     suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
@@ -72,12 +77,14 @@ def explain(sub: SubRatings, home: int, away: int, names: dict[int, str],
             points = sensitivity[metric] * deviation * possessions / 100
             gains = offense if points > 0 else defense
             if points > 0:
-                text = (f"{names[offense]}'s {off_label} ({_ordinal(off_pct[o])} percentile)"
-                        f" against {names[defense]}'s {def_label} ({_ordinal(def_pct[d])}):"
+                text = (f"{possessive(names[offense])} {off_label}"
+                        f" ({_ordinal(off_pct[o])} percentile) against"
+                        f" {possessive(names[defense])} {def_label} ({_ordinal(def_pct[d])}):"
                         f" about +{points:.1f} points for {names[offense]}.")
             else:
-                text = (f"{names[defense]}'s {def_label} ({_ordinal(def_pct[d])} percentile)"
-                        f" against {names[offense]}'s {off_label} ({_ordinal(off_pct[o])}):"
+                text = (f"{possessive(names[defense])} {def_label}"
+                        f" ({_ordinal(def_pct[d])} percentile) against"
+                        f" {possessive(names[offense])} {off_label} ({_ordinal(off_pct[o])}):"
                         f" about {abs(points):.1f} points for {names[defense]}.")
             items.append(Mismatch(gains, offense, defense, metric, points,
                                   float(off_pct[o]), float(def_pct[d]), text))

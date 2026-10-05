@@ -135,6 +135,13 @@ def test_sub_ratings_and_explainer():
     assert items == sorted(items, key=lambda m: abs(m.points), reverse=True)
 
 
+def test_possessive():
+    from hoops.models.explainer import possessive
+
+    assert possessive("Detroit Pistons") == "Detroit Pistons'"
+    assert possessive("Utah Jazz") == "Utah Jazz's"
+
+
 def test_player_values_add_up_to_team_strength():
     rows = []
     for team, net in ((1, 6.0), (2, -6.0)):

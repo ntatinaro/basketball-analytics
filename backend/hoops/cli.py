@@ -10,6 +10,7 @@ from datetime import date
 import psycopg
 
 from hoops.db.migrate import migrate
+from hoops.db.refresh import refresh_screen_tables
 from hoops.espn.client import EspnClient
 from hoops.espn.raw_store import RawStore
 from hoops.ingest.load import Loader
@@ -60,6 +61,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--candidates", type=int, default=40)
     p.add_argument("--report", type=str, help="also write the full report to this JSON file")
 
+    p = sub.add_parser("rebuild-ratings", help="rebuild stored rating history for seasons")
+    p.add_argument("--league", type=League, choices=list(League), required=True)
+    p.add_argument("--seasons", type=parse_seasons, required=True)
+
+    sub.add_parser("api", help="run the API server")
+
     p = sub.add_parser("refresh-predictions", help="refit ratings and predict upcoming games")
     p.add_argument("--league", type=League, choices=list(League), required=True)
 
@@ -82,6 +89,12 @@ def main(argv: list[str] | None = None) -> None:
 
         run(settings)
         return
+    if args.command == "api":
+        import uvicorn
+
+        uvicorn.run("hoops.api.app:app", host="0.0.0.0", port=8000, proxy_headers=True,
+                    log_level=settings.log_level.lower())
+        return
 
     with psycopg.connect(settings.database_url, autocommit=True) as conn:
         if args.command == "migrate":
@@ -101,6 +114,11 @@ def main(argv: list[str] | None = None) -> None:
                     json.dump(report, f, indent=2, default=str)
             print(format_exam_report(report))
             return
+        if args.command == "rebuild-ratings":
+            from hoops.models.history import rebuild
+
+            print(f"{rebuild(conn, args.league, args.seasons)} rating rows written")
+            return
         if args.command == "refresh-predictions":
             from hoops.models.live import ModelHooks
 
@@ -115,6 +133,7 @@ def main(argv: list[str] | None = None) -> None:
             for season in args.seasons:
                 loaded, failed = loader.backfill(season, reload=args.reload)
                 print(f"{args.league} {season}: {loaded} games loaded, {failed} failed")
+            refresh_screen_tables(conn)
         elif args.command == "sync-rosters":
             print(f"{loader.sync_rosters(args.season)} roster entries")
         elif args.command == "sync-day":

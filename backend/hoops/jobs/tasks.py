@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 import psycopg
 
+from hoops.db.refresh import refresh_screen_tables
 from hoops.espn import parse
 from hoops.ingest.load import Loader
 from hoops.leagues import COUNTED_SEASON_TYPES, League
@@ -173,11 +174,16 @@ class Jobs:
             self.capture_pregame_line(game_id, espn_id)
             self.hooks.lock(self.conn, game_id, now)
             details["locked"] += 1
+        finished = []
         for game_id, espn_id in self.finished_games_to_load(now):
             self.loader.load_game(espn_id)
             self.capture_close_line(game_id, espn_id)
+            finished.append(game_id)
+        if finished:
+            refresh_screen_tables(self.conn)
+        for game_id in finished:
             self.hooks.after_final(self.conn, game_id)
-            details["finished"] += 1
+        details["finished"] = len(finished)
         return details
 
     def capture_pregame_line(self, game_id: int, espn_id: str) -> None:
@@ -208,5 +214,6 @@ class Jobs:
         ).fetchall()
         for (espn_id,) in rows:
             self.loader.load_game(espn_id)
+        refresh_screen_tables(self.conn)
         self.hooks.overnight(self.conn, self.league)
         return {"reloaded": len(rows)}
