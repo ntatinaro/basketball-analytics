@@ -131,14 +131,26 @@ function Overview({ d }: { d: PlayerDetail }) {
   );
 }
 
+/** An actual stat with the game's projection beside it, when there was one. */
+function Actual({ value, projected }: { value: number | null; projected: number | undefined }) {
+  return (
+    <>
+      {value ?? "–"}
+      {projected !== undefined && <span className="muted small" title="Projected"> ({Math.round(projected)})</span>}
+    </>
+  );
+}
+
 function GameLog({ rows }: { rows: GameLogRow[] }) {
   const league = useLeague();
   const [kind, setKind] = useState<"regular" | "post">("regular");
   const shown = rows.filter((r) => (kind === "post" ? r.season_type === "post" : r.season_type !== "post")).slice().reverse();
   const hasPlayoffs = rows.some((r) => r.season_type === "post");
+  const hasProjections = rows.some((r) => r.projection);
   return (
     <div className="stack">
       {hasPlayoffs && <Segmented label="Season type" value={kind} onChange={setKind} options={[["regular", "Regular season"], ["post", "Playoffs"]]} />}
+      {hasProjections && <span className="small muted">Projected values are in parentheses, from the projection locked before each game.</span>}
       {shown.length === 0 ? <Empty>No games.</Empty> : (
         <div className="table-wrap">
           <table aria-label="Game log">
@@ -153,8 +165,14 @@ function GameLog({ rows }: { rows: GameLogRow[] }) {
                   <td className="left">{g.result}</td>
                   {g.did_not_play ? <td colSpan={11} className="left muted">{g.dnp_reason ?? "Did not play"}</td> : (
                     <>
-                      <td>{g.minutes ?? "–"}</td><td>{g.pts}</td><td>{g.reb}</td><td>{g.ast}</td><td>{g.stl}</td><td>{g.blk}</td><td>{g.tov}</td>
-                      <td>{g.fgm}-{g.fga}</td><td>{g.fg3m}-{g.fg3a}</td><td>{g.ftm}-{g.fta}</td><td>{signed(g.plus_minus, 0)}</td>
+                      <td><Actual value={g.minutes} projected={g.projection?.minutes} /></td>
+                      <td><Actual value={g.pts} projected={g.projection?.pts} /></td>
+                      <td><Actual value={g.reb} projected={g.projection?.reb} /></td>
+                      <td><Actual value={g.ast} projected={g.projection?.ast} /></td>
+                      <td>{g.stl}</td><td>{g.blk}</td><td>{g.tov}</td>
+                      <td>{g.fgm}-{g.fga}</td>
+                      <td>{g.fg3m}-{g.fg3a}{g.projection?.fg3m !== undefined && <span className="muted small" title="Projected 3PM"> ({Math.round(g.projection.fg3m)})</span>}</td>
+                      <td>{g.ftm}-{g.fta}</td><td>{signed(g.plus_minus, 0)}</td>
                     </>
                   )}
                 </tr>

@@ -24,6 +24,7 @@ export function ReportCardPage() {
       {card.isLoading && <Loading what="Loading report card" />}
       {card.error && <ErrorNote error={card.error} />}
       {card.data && <Live data={card.data} />}
+      {card.data?.model_switches && card.data.model_switches.length > 0 && <Switches data={card.data} />}
       {card.data && <Backtests data={card.data} />}
     </main>
   );
@@ -116,6 +117,26 @@ function Live({ data }: { data: ReportCard }) {
   );
 }
 
+function Switches({ data }: { data: ReportCard }) {
+  return (
+    <section className="card">
+      <h2>Model updates</h2>
+      <p className="small muted">
+        A few alternative models predict every game quietly. Once a month, one replaces the main model only if it
+        has been clearly better on the same games.
+      </p>
+      <ul className="stack" style={{ margin: 0, paddingLeft: 18 }}>
+        {data.model_switches!.map((s) => (
+          <li key={s.switched_at}>
+            {shortDate(s.switched_at)}: a new model took over after beating the previous one over {s.games} games
+            (log loss {s.challenger_log_loss.toFixed(3)} vs. {s.champion_log_loss.toFixed(3)}).
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function Backtests({ data }: { data: ReportCard }) {
   return (
     <section className="card">
@@ -131,10 +152,12 @@ function Backtests({ data }: { data: ReportCard }) {
         <div key={b.season} className="stack" style={{ borderTop: "1px solid var(--line)", paddingTop: 12 }}>
           <h3>{seasonLabel(b.season)}</h3>
           <Tiles s={b.model} />
-          <div className="small">
-            Early season (first 4 weeks): {pct(b.early_season.accuracy, 1)} right, log loss {b.early_season.log_loss.toFixed(3)} ·
-            Rest of season: {pct(b.rest_of_season.accuracy, 1)} right, log loss {b.rest_of_season.log_loss.toFixed(3)}
-          </div>
+          {b.early_season && b.rest_of_season && (
+            <div className="small">
+              Early season (first 4 weeks): {pct(b.early_season.accuracy, 1)} right, log loss {b.early_season.log_loss.toFixed(3)} ·
+              Rest of season: {pct(b.rest_of_season.accuracy, 1)} right, log loss {b.rest_of_season.log_loss.toFixed(3)}
+            </div>
+          )}
           {b.market && <Market m={b.market} />}
           <CalibrationChart bins={b.calibration} />
         </div>

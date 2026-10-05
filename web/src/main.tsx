@@ -14,6 +14,7 @@ import "./styles.css";
 const TeamPage = lazy(() => import("./pages/Team").then((m) => ({ default: m.TeamPage })));
 const PlayerPage = lazy(() => import("./pages/Player").then((m) => ({ default: m.PlayerPage })));
 const ReportCardPage = lazy(() => import("./pages/ReportCard").then((m) => ({ default: m.ReportCardPage })));
+const AdminPage = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminPage })));
 
 function OnDemand({ children }: { children: ReactNode }) {
   return <Suspense fallback={<main className="page"><Loading what="Loading" /></main>}>{children}</Suspense>;
@@ -44,6 +45,7 @@ createRoot(document.getElementById("root")!).render(
             <Route path="players" element={<PlayersPage />} />
             <Route path="players/:id" element={<OnDemand><PlayerPage /></OnDemand>} />
             <Route path="report-card" element={<OnDemand><ReportCardPage /></OnDemand>} />
+            <Route path="admin" element={<OnDemand><AdminPage /></OnDemand>} />
           </Route>
           <Route path="*" element={<Navigate to="/nba/tonight" replace />} />
         </Routes>

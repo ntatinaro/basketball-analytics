@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
@@ -21,6 +21,7 @@ from hoops.models import data
 from hoops.models.config import DEFAULT, ModelSettings
 from hoops.models.context import GameContext, absence_cost, schedule_context
 from hoops.models.explainer import explain, fit_sensitivities
+from hoops.models.live_projections import Projector
 from hoops.models.player_values import roster_strength, season_player_values
 from hoops.models.predictor import Calibration, Prediction, predict
 from hoops.models.ratings import (
@@ -37,6 +38,9 @@ log = logging.getLogger(__name__)
 MODEL_NAME = "game_predictor"
 UPCOMING_DAYS = 7
 VALUE_BLEND_MINUTES = 800.0     # current-season minutes that outweigh last season's value
+CHECKPOINT_MIN_GAMES = 150      # a challenger needs this many graded games side by side,
+CHECKPOINT_MIN_GAIN = 0.003     # this much lower log loss,
+CHECKPOINT_MIN_T = 2.0          # and a paired t-statistic this high to replace the champion
 
 
 @dataclass
@@ -68,6 +72,23 @@ def load_champion(conn: psycopg.Connection, league: League) -> Champion:
     return Champion(vid, members, cals)
 
 
+def load_challengers(conn: psycopg.Connection, league: League) -> list[Champion]:
+    """Shadow models: they predict every game quietly and are graded like the champion."""
+    rows = conn.execute(
+        "SELECT model_version_id, settings FROM model_versions WHERE league = %s"
+        " AND model_name = %s AND role = 'challenger' ORDER BY model_version_id",
+        (str(league), MODEL_NAME)).fetchall()
+    out = []
+    for vid, settings in rows:
+        members = [ModelSettings(**m) for m in settings.get("members", [])]
+        if not members:
+            continue
+        cals = [Calibration(**c) for c in settings.get("calibrations", [])] or [
+            Calibration()] * len(members)
+        out.append(Champion(vid, members, cals))
+    return out
+
+
 @dataclass
 class LiveState:
     season: int
@@ -79,6 +100,7 @@ class LiveState:
     sensitivity: dict[str, float]
     values: pd.DataFrame                 # player values for absences
     as_of: datetime
+    challengers: list[tuple[Champion, list[TeamRatings]]] = field(default_factory=list)
 
 
 class ModelHooks:
@@ -87,6 +109,7 @@ class ModelHooks:
         self.rehearsal = rehearsal     # preseason games get (rehearsal) predictions too
         self._priors: dict[tuple[int, str], tuple[Priors, pd.DataFrame]] = {}
         self._state: LiveState | None = None
+        self.projector = Projector(league)
 
     # -- state ------------------------------------------------------------------------
 
@@ -132,6 +155,7 @@ class ModelHooks:
     def refit(self, conn: psycopg.Connection, now: datetime | None = None) -> LiveState:
         """Fits current ratings from every finished game of the season and stores them."""
         now = now or datetime.now(UTC)
+        self.projector.invalidate()
         champion = load_champion(conn, self.league)
         season = self.current_season(conn, now)
         games = data.games_frame(conn, self.league, [season])
@@ -152,8 +176,13 @@ class ModelHooks:
             "SELECT team_id, abbreviation FROM teams WHERE league = %s",
             (str(self.league),)).fetchall())
         current_values = self._current_values(conn, season, ratings[0], values)
+        challengers = []
+        for challenger in load_challengers(conn, self.league):
+            fitted = [fit_team_ratings(games, team_ids, self.priors(conn, season, m)[0], m, now)
+                      for m in challenger.members]
+            challengers.append((challenger, fitted))
         self._state = LiveState(season, team_ids, names, abbreviations, ratings, sub,
-                                sensitivity, current_values, now)
+                                sensitivity, current_values, now, challengers)
         self._store_ratings(conn, champion, season, now)
         return self._state
 
@@ -250,6 +279,15 @@ class ModelHooks:
             "explainer": [{"text": m.text, "points": m.points, "metric": m.metric,
                            "beneficiary": m.beneficiary} for m in mismatches],
         }
+        self._project(conn, game_id, season, season_type, home, away, preds, context, absent,
+                      lock)
+        try:
+            self._shadow_predictions(conn, state, game_id, season_type, home, away, neutral,
+                                     context, lock)
+        except (psycopg.OperationalError, psycopg.InterfaceError):
+            raise
+        except Exception:  # noqa: BLE001 - shadow models never block the public prediction
+            log.exception("shadow predictions failed for game %s", game_id)
         digest = hashlib.sha1(json.dumps(
             {k: inputs[k] for k in ("home", "away", "absences", "rest_days")},
             sort_keys=True, default=str).encode()).hexdigest()
@@ -273,6 +311,57 @@ class ModelHooks:
              json.dumps(inputs, default=str), digest),
         ).fetchone()
         return pid
+
+    def _shadow_predictions(self, conn, state: LiveState, game_id: int, season_type: str,
+                            home: int, away: int, neutral: bool, context: GameContext,
+                            lock: bool) -> int:
+        """Each challenger's prediction for the game, stored as a shadow prediction (never
+        shown publicly) and locked with the public one. Returns how many were written."""
+        written = 0
+        for challenger, ratings in state.challengers:
+            preds = [predict(r, home, away, neutral=neutral, context=context, calibration=cal,
+                             use_rest_travel=m.use_rest_travel, absence_weight=m.absence_weight)
+                     for m, cal, r in zip(challenger.members, challenger.calibrations, ratings,
+                                          strict=True)]
+            prob = float(np.mean([p.home_win_prob for p in preds]))
+            margin = float(np.mean([p.margin_home for p in preds]))
+            total = float(np.mean([p.total for p in preds]))
+            digest = hashlib.sha1(f"{prob:.4f}|{margin:.2f}|{total:.1f}".encode()).hexdigest()
+            if not lock:
+                latest = conn.execute(
+                    "SELECT inputs_hash FROM predictions WHERE game_id = %s AND is_shadow"
+                    " AND model_version_id = %s ORDER BY created_at DESC LIMIT 1",
+                    (game_id, challenger.model_version_id)).fetchone()
+                if latest and latest[0] == digest:
+                    continue
+            conn.execute(
+                """
+                INSERT INTO predictions (game_id, model_version_id, home_win_prob, margin_home,
+                    total, margin_low, margin_high, is_locked, is_shadow, is_rehearsal,
+                    inputs_hash)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, true, %s, %s)
+                """,
+                (game_id, challenger.model_version_id, prob, margin, total,
+                 float(np.mean([p.margin_low for p in preds])),
+                 float(np.mean([p.margin_high for p in preds])), lock,
+                 season_type not in COUNTED_SEASON_TYPES, digest))
+            written += 1
+        return written
+
+    def _project(self, conn, game_id, season, season_type, home, away,
+                 preds: list[Prediction], context: GameContext, absent: dict, lock: bool) -> None:
+        """Player projections for the game. A failure here never blocks the prediction."""
+        out = {e["player_id"] for side in absent.values() for e in side
+               if e.get("status") == "Out"}
+        try:
+            self.projector.project_game(
+                conn, game_id, season=season, season_type=season_type, home=home, away=away,
+                home_points=float(np.mean([p.home_points for p in preds])),
+                away_points=float(np.mean([p.away_points for p in preds])),
+                home_b2b=context.home_rest_days <= 1, away_b2b=context.away_rest_days <= 1,
+                out=out, lock=lock)
+        except Exception:  # noqa: BLE001
+            log.exception("player projections failed for game %s", game_id)
 
     def _context(self, conn, game_id, season, home, away, start, state: LiveState):
         sched = pd.DataFrame(conn.execute(
@@ -350,14 +439,16 @@ class ModelHooks:
         self.predict_game(conn, game_id, now, lock=True)
 
     def after_finals(self, conn: psycopg.Connection, game_ids: list[int]) -> None:
-        """Grades every newly finished game, then refits and refreshes once."""
+        """Grades every newly finished game (predictions and player projections), then
+        refits and refreshes once."""
         for game_id in game_ids:
-            try:
-                self.grade(conn, game_id)
-            except (psycopg.OperationalError, psycopg.InterfaceError):
-                raise
-            except Exception:  # noqa: BLE001 - the overnight sweep grades it later
-                log.exception("grading game %s failed", game_id)
+            for grade in (self.grade, self.projector.grade):
+                try:
+                    grade(conn, game_id)
+                except (psycopg.OperationalError, psycopg.InterfaceError):
+                    raise
+                except Exception:  # noqa: BLE001 - the overnight sweep grades it later
+                    log.exception("grading game %s failed", game_id)
         self.refit(conn)
         self.refresh(conn)
 
@@ -370,6 +461,68 @@ class ModelHooks:
         self.refit(conn)
         self.refresh(conn)
 
+    def checkpoint(self, conn: psycopg.Connection, league: League | None = None) -> dict:
+        """Monthly: a challenger replaces the champion only if it has been clearly better
+        on the same games since the last switch: at least CHECKPOINT_MIN_GAMES graded
+        games, lower log loss by CHECKPOINT_MIN_GAIN or more, and a paired t-statistic of
+        at least CHECKPOINT_MIN_T. The old champion becomes a challenger."""
+        champion = load_champion(conn, self.league)
+        last = conn.execute(
+            "SELECT max(switched_at) FROM model_switches WHERE league = %s AND model_name = %s",
+            (str(self.league), MODEL_NAME)).fetchone()[0]
+        rows = conn.execute(
+            """
+            SELECT p.game_id, p.model_version_id, gr.log_loss
+            FROM predictions p JOIN prediction_grades gr USING (prediction_id)
+            JOIN games g USING (game_id)
+            WHERE g.league = %s AND p.is_locked AND NOT p.is_rehearsal
+              AND (%s::timestamptz IS NULL OR g.start_time > %s)
+            """, (str(self.league), last, last)).fetchall()
+        champ = {g: ll for g, v, ll in rows if v == champion.model_version_id}
+        results = []
+        for challenger in load_challengers(conn, self.league):
+            pairs = np.array([(champ[g], ll) for g, v, ll in rows
+                              if v == challenger.model_version_id and g in champ])
+            entry = {"model_version_id": challenger.model_version_id, "games": len(pairs)}
+            if len(pairs) >= 2:
+                gain = pairs[:, 0] - pairs[:, 1]          # positive: challenger was better
+                sd = float(np.std(gain, ddof=1))
+                entry.update(champion_log_loss=float(pairs[:, 0].mean()),
+                             challenger_log_loss=float(pairs[:, 1].mean()),
+                             gain=float(gain.mean()),
+                             t=float(gain.mean() / (sd / np.sqrt(len(gain)))) if sd > 0 else 0.0)
+                entry["qualifies"] = (len(pairs) >= CHECKPOINT_MIN_GAMES
+                                      and entry["gain"] >= CHECKPOINT_MIN_GAIN
+                                      and entry["t"] >= CHECKPOINT_MIN_T)
+            results.append(entry)
+        winners = sorted((r for r in results if r.get("qualifies")), key=lambda r: -r["gain"])
+        if not winners:
+            return {"switched": False, "champion": champion.model_version_id,
+                    "challengers": results}
+        best = winners[0]
+        with conn.transaction():
+            conn.execute("UPDATE model_versions SET role = 'challenger'"
+                         " WHERE model_version_id = %s", (champion.model_version_id,))
+            conn.execute("UPDATE model_versions SET role = 'champion'"
+                         " WHERE model_version_id = %s", (best["model_version_id"],))
+            conn.execute(
+                """
+                INSERT INTO model_switches (league, model_name, from_version_id, to_version_id,
+                    games, champion_log_loss, challenger_log_loss, t_stat)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (str(self.league), MODEL_NAME, champion.model_version_id,
+                      best["model_version_id"], best["games"], best["champion_log_loss"],
+                      best["challenger_log_loss"], best["t"]))
+        self._priors.clear()
+        state = self.refit(conn)
+        # The new champion's rating history for this season, so trend charts continue. Last
+        # season goes first as the warm-up, as in the live fit (its regression and roster
+        # start), so the rebuilt trend ends where the refit just stored.
+        from hoops.models.history import rebuild
+        rebuild(conn, self.league, [state.season - 1, state.season])
+        return {"switched": True, "from": champion.model_version_id,
+                "to": best["model_version_id"], "challengers": results}
+
     def grade_missing(self, conn: psycopg.Connection) -> int:
         """Grades any locked prediction of a finished game that has no grade yet (after
         downtime, or a grading failure), so every locked prediction ends up graded."""
@@ -381,7 +534,8 @@ class ModelHooks:
             WHERE g.league = %s AND g.status = 'final' AND g.home_score IS NOT NULL
               AND p.is_locked AND gr.prediction_id IS NULL
             """, (str(self.league),)).fetchall()
-        return sum(self.grade(conn, game_id) for (game_id,) in rows)
+        graded = sum(self.grade(conn, game_id) for (game_id,) in rows)
+        return graded + self.projector.grade_missing(conn)
 
     # -- grading ----------------------------------------------------------------------
 

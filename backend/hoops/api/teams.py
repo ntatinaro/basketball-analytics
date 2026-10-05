@@ -129,15 +129,21 @@ def _sub_ratings(conn, team_id: int, season: int) -> list[dict]:
 
 
 def _trend(conn, team_id: int, season: int) -> list[dict]:
-    """The team's rating after each game day of the season (latest model version)."""
+    """The team's rating after each game day of the season, from the model version that
+    wrote the latest rating (rows belong to whichever version was champion at the time, so
+    reading by the current role would empty past seasons after a model switch)."""
     return conn.execute(
         """
         SELECT r.as_of, r.games_played, r.overall, r.overall_se
-        FROM team_ratings r JOIN model_versions m USING (model_version_id)
-        WHERE r.team_id = %s AND r.season = %s AND m.role = 'champion'
+        FROM team_ratings r
+        WHERE r.team_id = %s AND r.season = %s AND r.model_version_id = (
+            SELECT l.model_version_id FROM team_ratings l
+            JOIN model_versions m USING (model_version_id)
+            WHERE l.team_id = %s AND l.season = %s
+            ORDER BY l.as_of DESC, (m.role = 'champion') DESC LIMIT 1)
         ORDER BY r.as_of
         """,
-        (team_id, season),
+        (team_id, season, team_id, season),
     ).fetchall()
 
 

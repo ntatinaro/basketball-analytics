@@ -174,7 +174,11 @@ Postgres. ESPN IDs are stored directly on teams, players, and games (no crosswal
 | Operations | `job_runs`, `data_quality_issues` | Data freshness, job history, quality reports |
 | Backtests | `backtest_predictions` | The champion's walk-forward predictions for past seasons. Feeds the report card's backtest section and fills predictions on past game pages. |
 
-**Added in later versions:** `player_projections`, admin login, `manual_absences`, shadow predictions (V1.1); `live_states`, `live_win_prob` (ours and ESPN's), `insights` (V2); `player_impact`, `lineup_stats`, `shot_quality`, `play_style`, `sim_runs`, `sim_results` (V3); `field_projection`, `brackets`, `bracket_sim_results` (V5).
+| Player projections (V1.1) | `projection_sets`, `player_projections`, `projection_grades` | Append-only like `predictions`: a new set when anything changes, locked with the prediction 30 minutes before tip-off; the locked set is graded after the game (mean error per stat, share inside the range). |
+
+| Admin and shadow models (V1.1) | `manual_absences`, `model_switches` | NCAA absences entered by the owner (used from V4). Each checkpoint switch from champion to challenger, with the side-by-side record that justified it. Shadow predictions live in `predictions` (`is_shadow`). |
+
+**Added in later versions:** `live_states`, `live_win_prob` (ours and ESPN's), `insights` (V2); `player_impact`, `lineup_stats`, `shot_quality`, `play_style`, `sim_runs`, `sim_results` (V3); `field_projection`, `brackets`, `bracket_sim_results` (V5).
 
 ## 8. Data quality gate
 
@@ -223,13 +227,13 @@ Every model has a version string, and outputs record the version that produced t
 - **Accuracy target:** over a season, within 1.5 percentage points of the market's accuracy and within 0.01 of its log loss, and clearly better than the naive baseline. The app launches regardless; the report card and admin panel show the gap.
 - **Absences in backtests:** past injury reports are not available, so backtests treat a rotation player who did not play as "Out". Live predictions use the injury report.
 - **Sanity check:** final-season ratings broadly agree with public ratings such as ESPN's BPI.
-- **Shadow models (V1.1):** the champion makes public predictions; a few challengers predict every game quietly and are graded. At fixed checkpoints (for example monthly), a challenger replaces the champion only if it has been clearly better. Switches are noted on the report card.
+- **Shadow models (V1.1):** the champion makes public predictions; a few challengers (the next-best exam candidates) predict every game quietly and are graded. Checkpoint, on the first of each month: a challenger replaces the champion only with at least 150 graded games side by side since the last switch, at least 0.003 lower log loss, and a paired t-statistic of at least 2; the old champion becomes a challenger. Switches are noted on the report card.
 
 ### 9.3 Later versions
 
 | Version | Model | Method |
 | --- | --- | --- |
-| V1.1 | Single-game player projections | Minutes model times per-minute rates, shrunk toward average for small samples, adjusted for opponent, pace, rest, and absent teammates |
+| V1.1 | Single-game player projections | Minutes model times per-minute rates, shrunk toward average for small samples, adjusted for opponent, pace, rest, and absent teammates. As built: minutes are recency weighted from last season's minutes per game; each team's available players share 241 minutes, absent teammates' minutes going to them and surplus minutes coming off the deep bench first; starters lose minutes when a blowout is likely. Live, each player's minutes are weighted by his chance of playing (his appearance rate, starting from a guess based on last season's minutes), since who plays is not known before the game. Scoring stats scale with the team's predicted points, other stats with the predicted pace. 10th to 90th percentile ranges are fitted on past seasons and calibrated so that, shown as whole numbers, they hold 80% of results. Rolling exams pick the settings; projections beat players' season averages by about 5.5% (minutes about 13%, points about 5%). |
 | V2 | Live win probability | Trained on past play-by-play: score difference, time remaining, possession, pregame win probability, foul and bonus state. Calibrated. One model per league. |
 | V2 | Insight detectors | Rules with significance thresholds; developing events update their card in place |
 | V3 | Player impact | Regularized adjusted plus-minus over stints, with a box-score prior. Replaces box-score values in starting ratings and absences. |
@@ -289,7 +293,7 @@ Read-only JSON under `/api`. `{league}` is `nba` or `ncaam`. Team and player end
 - **Secrets and settings:** a `.env` file on the VPS, never committed.
 - **Services:** Quadlet units for `postgres`, `api`, `worker`, and `web`. Only `web` is reachable, on `127.0.0.1:8080`.
 - **Public access:** the owner's existing Caddy (probably in a container) serves `hoops.<owner's domain>` with HTTPS and forwards to the app. If that Caddy runs in a container, it reaches the app through a shared Podman network or the host address rather than `127.0.0.1`; confirm with `podman ps` at deploy time. The owner adds a DNS record for the subdomain.
-- **Admin panel (V1.1):** view only. Shows models (versions, settings, champion and challengers), rolling exam results, live accuracy against the target, training and job history, and data quality reports. Training runs and exam results are recorded from V1, so the history is complete. Actions (start a backtest, promote a challenger, re-run a job) come later.
+- **Admin panel (V1.1):** at `/nba/admin`. One password (`HOOPS_ADMIN_PASSWORD`); sessions are cookies signed with `HOOPS_SECRET_KEY` (HttpOnly, Secure, SameSite=Strict, 30 days), and failed logins are capped at 10 per 15 minutes for everyone together (behind two proxies the API cannot tell callers apart). A known trade-off: someone who finds the login can keep the owner locked out by failing every 90 seconds; acceptable for a read-only panel on an unpublicised link. Without both the password and the secret key the panel is switched off (without a fixed key, every restart would log the owner out). View only. Shows models (versions, settings, champion and challengers), rolling exam results, live accuracy against the target, training and job history, and data quality reports. Training runs and exam results are recorded from V1, so the history is complete. Actions (start a backtest, promote a challenger, re-run a job) come later.
 - **Monitoring:** the "data delayed" note on the site, and the admin panel from V1.1. No email or phone alerts at launch.
 - **Backups:** none at launch, by decision. To be revisited. Note: locked prediction history cannot be recreated from ESPN.
 

@@ -45,6 +45,9 @@ class RecordingHooks:
     def refresh(self, conn, league):
         return 0
 
+    def checkpoint(self, conn, league):
+        return {}
+
 
 def fake_espn(request: httpx.Request) -> httpx.Response:
     path = request.url.path

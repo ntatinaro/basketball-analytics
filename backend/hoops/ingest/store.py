@@ -117,10 +117,12 @@ class Store:
                 if team_id is not None:
                     self.conn.execute(
                         """
-                        INSERT INTO roster_entries (player_id, team_id, season, jersey)
-                        VALUES (%s, %s, %s, %s)
+                        INSERT INTO roster_entries (player_id, team_id, season, jersey,
+                            listed_on)
+                        VALUES (%s, %s, %s, %s, CURRENT_DATE)
                         ON CONFLICT (player_id, team_id, season)
-                        DO UPDATE SET jersey = COALESCE(EXCLUDED.jersey, roster_entries.jersey)
+                        DO UPDATE SET jersey = COALESCE(EXCLUDED.jersey, roster_entries.jersey),
+                            listed_on = CURRENT_DATE
                         """,
                         (player_id, team_id, season, r.jersey),
                     )

@@ -66,6 +66,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--candidates", type=int, default=40)
     p.add_argument("--report", type=str, help="also write the full report to this JSON file")
 
+    p = sub.add_parser("projection-exams",
+                       help="run rolling exams for player projections and choose the champion")
+    p.add_argument("--league", type=League, choices=list(League), default=League.NBA)
+    p.add_argument("--warmup", type=int, required=True)
+    p.add_argument("--seasons", type=parse_seasons, required=True)
+    p.add_argument("--candidates", type=int, default=30)
+    p.add_argument("--report", type=str, help="also write the full report to this JSON file")
+
     p = sub.add_parser("rebuild-ratings", help="rebuild stored rating history for seasons")
     p.add_argument("--league", type=League, choices=list(League), required=True)
     p.add_argument("--seasons", type=parse_seasons, required=True)
@@ -125,6 +133,17 @@ def main(argv: list[str] | None = None) -> None:
                 with open(args.report, "w") as f:
                     json.dump(report, f, indent=2, default=str)
             print(format_exam_report(report))
+            return
+        if args.command == "projection-exams":
+            from hoops.evaluation.projection_exams import format_report as projection_report
+            from hoops.evaluation.projection_exams import run_projection_exams
+
+            report = run_projection_exams(conn, args.league, args.warmup, args.seasons,
+                                          args.candidates)
+            if args.report:
+                with open(args.report, "w") as f:
+                    json.dump(report, f, indent=2, default=str)
+            print(projection_report(report))
             return
         if args.command == "rebuild-ratings":
             from hoops.models.history import rebuild

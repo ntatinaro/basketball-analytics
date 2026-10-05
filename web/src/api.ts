@@ -8,6 +8,22 @@ export class ApiError extends Error {
   }
 }
 
+export async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`/api/${path}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail ?? detail;
+    } catch {
+      /* keep status text */
+    }
+    throw new ApiError(res.status, typeof detail === "string" ? detail : "Request failed");
+  }
+  return res.json() as Promise<T>;
+}
+
 export async function api<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T> {
   const query = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") query.set(k, String(v));
@@ -181,6 +197,20 @@ export interface GameLogRow {
   oreb: number | null; dreb: number | null; reb: number | null; ast: number | null;
   stl: number | null; blk: number | null; tov: number | null; pf: number | null;
   plus_minus: number | null;
+  projection: Partial<Record<"minutes" | "pts" | "reb" | "ast" | "fg3m", number>> | null;
+}
+
+export interface StatRange { expected: number; low: number; high: number }
+export interface ProjectedPlayer {
+  player_id: number; name: string; position: string | null; headshot: string | null;
+  projection: Record<string, StatRange>;
+  actual: Record<string, number | null> | null;
+  did_not_play: boolean | null;
+}
+export interface GameProjections {
+  game_id: number; available: boolean; stats: string[]; headline: string[];
+  locked?: boolean; rehearsal?: boolean; created_at?: string; updated_after_lock?: boolean;
+  teams: { home: ProjectedPlayer[]; away: ProjectedPlayer[] };
 }
 
 export interface PlayerDetail {
@@ -207,8 +237,14 @@ export interface MarketCompare {
   note?: string;
 }
 
+export interface ModelSwitch {
+  switched_at: string; games: number; champion_log_loss: number; challenger_log_loss: number;
+  from_version: string; to_version: string;
+}
+
 export interface ReportCard {
   season: number;
+  model_switches?: ModelSwitch[];
   live: {
     games: number;
     model?: Summary;
@@ -223,8 +259,8 @@ export interface ReportCard {
   backtests: {
     season: number;
     model: Summary;
-    early_season: Summary;
-    rest_of_season: Summary;
+    early_season: Summary | null;
+    rest_of_season: Summary | null;
     calibration: CalibrationBin[];
     market?: MarketCompare;
   }[];

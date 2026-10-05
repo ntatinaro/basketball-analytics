@@ -63,3 +63,52 @@ test("no sideways scrolling on the main screens", async ({ page }) => {
     expect(overflow, path).toBe(false);
   }
 });
+
+test("projections tab shows ranges for an upcoming game, when projections exist", async ({ page, request }) => {
+  const meta = await (await request.get("/api/nba/meta")).json();
+  const today = new Date().toISOString().slice(0, 10);
+  let gameId: number | undefined;
+  for (let d = 0; d < 7 && gameId === undefined; d++) {
+    const date = new Date(Date.parse(today) + d * 86_400_000).toISOString().slice(0, 10);
+    const games = (await (await request.get(`/api/nba/games?date=${date}`)).json()).games ?? [];
+    for (const g of games) {
+      const proj = await (await request.get(`/api/nba/games/${g.id}/projections`)).json();
+      if (proj.available) { gameId = g.id; break; }
+    }
+  }
+  test.skip(gameId === undefined || !meta, "no projections in this database");
+  await page.goto(`/nba/games/${gameId}`);
+  await page.getByRole("tab", { name: "Projections" }).click();
+  const table = page.locator("table").first();
+  await expect(table.getByRole("columnheader", { name: "Pts" })).toBeVisible();
+  await expect(table.locator("tbody tr").first()).toContainText(/\d+–\d+/);
+  await page.getByLabel("Full projection").check();
+  await expect(table.getByRole("columnheader", { name: "FGA" })).toBeVisible();
+});
+
+test("admin panel: login, tabs, logout (when an admin password is set)", async ({ page, request }) => {
+  const me = await (await request.get("/api/admin/me")).json();
+  const password = process.env.HOOPS_ADMIN_PASSWORD;
+  test.skip(!me.enabled || !password, "admin panel switched off, or HOOPS_ADMIN_PASSWORD not given to the test");
+  // The wrong-password path is covered by the API tests: failures here would spend the
+  // shared login limit (10 per 15 minutes) and make repeated runs fail.
+  await page.goto("/nba/admin");
+  await page.getByLabel("Password").fill(password!);
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(page.getByRole("table", { name: "Jobs" })).toBeVisible();
+  for (const [tab, table] of [["Data quality", "Quality by season"], ["Models", "Model versions"], ["NCAA absences", "Find player"]]) {
+    await page.getByRole("tab", { name: tab }).click();
+    await expect(page.getByRole(tab === "NCAA absences" ? "searchbox" : "table", { name: table })).toBeVisible();
+  }
+  await page.getByRole("button", { name: "Log out" }).click();
+  await expect(page.getByLabel("Password")).toBeVisible();
+
+  // An expired or cleared session goes back to the login form, not to error boxes.
+  await page.getByLabel("Password").fill(password!);
+  await page.getByRole("button", { name: "Log in" }).click();
+  await page.getByRole("tab", { name: "Data health" }).click();
+  await expect(page.getByRole("table", { name: "Jobs" })).toBeVisible();
+  await page.context().clearCookies();
+  await page.getByRole("tab", { name: "Data quality" }).click();
+  await expect(page.getByLabel("Password")).toBeVisible();
+});

@@ -16,6 +16,8 @@ class Settings:
     log_level: str
     leagues: tuple[League, ...]
     rehearsal: bool
+    admin_password: str | None = None   # unset: the admin panel is switched off
+    secret_key: str | None = None       # signs admin sessions
 
 
 def load_settings() -> Settings:
@@ -28,4 +30,6 @@ def load_settings() -> Settings:
         leagues=tuple(League(x.strip()) for x in
                       os.environ.get("HOOPS_LEAGUES", "nba").split(",") if x.strip()),
         rehearsal=os.environ.get("HOOPS_REHEARSAL", "0").lower() in ("1", "true", "yes"),
+        admin_password=os.environ.get("HOOPS_ADMIN_PASSWORD") or None,
+        secret_key=os.environ.get("HOOPS_SECRET_KEY") or None,
     )
