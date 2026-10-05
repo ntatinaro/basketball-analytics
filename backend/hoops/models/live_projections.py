@@ -103,8 +103,9 @@ class Projector:
         rows, chance = [], {}
         for team, pts, opp_pts, b2b in ((home, home_points, away_points, home_b2b),
                                         (away, away_points, home_points, away_b2b)):
-            # The season's roster keeps everyone who played for the team; a player who has
-            # since played for another team (traded, released) is not projected here.
+            # The season's roster keeps everyone who ever played for or was listed by the
+            # team. A player is projected only for the team where he was last seen, playing
+            # or on the roster sync's list, so a traded player moves to his new team at once.
             roster = [p for (p,) in conn.execute(
                 """
                 SELECT r.player_id FROM roster_entries r
@@ -112,8 +113,9 @@ class Projector:
                   AND NOT EXISTS (
                       SELECT 1 FROM roster_entries o
                       WHERE o.player_id = r.player_id AND o.season = r.season
-                        AND o.team_id <> r.team_id AND o.last_game IS NOT NULL
-                        AND (r.last_game IS NULL OR o.last_game > r.last_game))
+                        AND o.team_id <> r.team_id
+                        AND GREATEST(o.last_game, o.listed_on)
+                            > COALESCE(GREATEST(r.last_game, r.listed_on), '-infinity'))
                 """, (season, team))]
             available = [p for p in roster if p not in out]
             for p in available:

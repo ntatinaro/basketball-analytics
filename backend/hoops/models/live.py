@@ -515,9 +515,11 @@ class ModelHooks:
                       best["challenger_log_loss"], best["t"]))
         self._priors.clear()
         state = self.refit(conn)
-        # The new champion's rating history for this season, so trend charts continue.
+        # The new champion's rating history for this season, so trend charts continue. Last
+        # season goes first as the warm-up, as in the live fit (its regression and roster
+        # start), so the rebuilt trend ends where the refit just stored.
         from hoops.models.history import rebuild
-        rebuild(conn, self.league, [state.season])
+        rebuild(conn, self.league, [state.season - 1, state.season])
         return {"switched": True, "from": champion.model_version_id,
                 "to": best["model_version_id"], "challengers": results}
 

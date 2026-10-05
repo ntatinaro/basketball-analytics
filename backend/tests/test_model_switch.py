@@ -32,6 +32,14 @@ def test_public_history_survives_a_model_switch(db, league, monkeypatch):  # noq
     graded_pairs(db, league, old, new, CHECKPOINT_MIN_GAMES, 0.62, 0.60)
     assert hooks.checkpoint(db)["to"] == new
 
+    # The rebuilt trend starts from last season (the live fit's warm-up), so it ends where a
+    # live refit on the same day does.
+    as_of, overall = db.execute(
+        "SELECT as_of, overall FROM team_ratings WHERE team_id = %s AND season = 2026"
+        " AND model_version_id = %s ORDER BY as_of DESC LIMIT 1", (league[1], new)).fetchone()
+    live = hooks.refit(db, as_of).ratings[0].frame().set_index("team_id")["overall"]
+    assert live[league[1]] == pytest.approx(overall, abs=1e-3)   # one season alone: off by 0.2
+
     monkeypatch.setenv("HOOPS_DATABASE_URL", os.environ["HOOPS_TEST_DATABASE_URL"])
     deps._pool = None
     deps.clear_cache()

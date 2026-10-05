@@ -185,3 +185,21 @@ def test_traded_players_are_not_projected_for_their_old_team(db, league):  # noq
     set_id, _ = latest_set(db, game_id)
     rows = projected(db, set_id)
     assert traded not in rows and len(rows) == 15
+
+
+def test_newly_acquired_players_are_projected_for_their_new_team(db, league):  # noqa: F811
+    players = add_players(db, league)
+    acquired = players[league[2]][0]              # played for the away team, now on the home team
+    db.execute("UPDATE roster_entries SET last_game = '2025-12-01' WHERE player_id = %s",
+               (acquired,))
+    db.execute("UPDATE roster_entries SET listed_on = '2025-12-05' WHERE player_id = %s",
+               (acquired,))
+    db.execute("INSERT INTO roster_entries (player_id, team_id, season, listed_on)"
+               " VALUES (%s, %s, 2026, '2026-01-12')", (acquired, league[1]))
+    hooks = ModelHooks(League.NBA)
+    game_id = add_upcoming(db, league, 20)
+    hooks.refresh(db, now=NOW)
+    set_id, _ = latest_set(db, game_id)
+    teams = db.execute("SELECT team_id FROM player_projections WHERE projection_set_id = %s"
+                       " AND player_id = %s", (set_id, acquired)).fetchall()
+    assert teams == [(league[1],)]                 # the new team only, not both
