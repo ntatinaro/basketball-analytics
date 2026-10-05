@@ -78,10 +78,24 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: [T, st
 }
 
 /** An image that quietly leaves an empty space of the same size if it fails to load. */
+// Pixel sizes requested from ESPN's image resizer per display class (about 2x the CSS
+// size). The original logos are 60 KB and headshots 250 KB; resized they are 3-8 KB.
+const IMAGE_SIZES: Record<string, [number, number]> = {
+  logo: [64, 64], "logo-lg": [128, 128], headshot: [96, 70], "headshot-lg": [240, 176],
+};
+const ESPN_IMAGES = "https://a.espncdn.com/i/";
+
+export function sizedImage(src: string, className: string): string {
+  const size = IMAGE_SIZES[className];
+  if (!size || !src.startsWith(ESPN_IMAGES)) return src;
+  const path = src.slice("https://a.espncdn.com".length);
+  return `https://a.espncdn.com/combiner/i?img=${encodeURIComponent(path)}&w=${size[0]}&h=${size[1]}`;
+}
+
 function SafeImage({ src, alt, className }: { src?: string | null; alt: string; className: string }) {
   const [failed, setFailed] = useState(false);
   if (!src || failed) return <span className={className} aria-hidden />;
-  return <img className={className} src={src} alt={alt} loading="lazy" onError={() => setFailed(true)} />;
+  return <img className={className} src={sizedImage(src, className)} alt={alt} loading="lazy" onError={() => setFailed(true)} />;
 }
 
 export function TeamLogo({ src, alt, large = false }: { src?: string | null; alt: string; large?: boolean }) {
@@ -96,7 +110,7 @@ export function Headshot({ src, alt, large = false }: { src?: string | null; alt
 export function RowImage({ src, className }: { src?: string | null; className: string }) {
   if (!src) return <span className={className} aria-hidden />;
   return (
-    <img className={className} src={src} alt="" loading="lazy" decoding="async"
+    <img className={className} src={sizedImage(src, className)} alt="" loading="lazy" decoding="async"
       onError={(e) => { e.currentTarget.style.visibility = "hidden"; }} />
   );
 }

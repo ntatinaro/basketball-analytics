@@ -47,10 +47,10 @@ function Market({ m }: { m: MarketCompare }) {
     <div className="stack">
       <div className="table-wrap auto-height">
         <table aria-label="Model vs. betting market">
-          <thead><tr><th scope="col" className="left">Same games ({m.model.games})</th><th scope="col">Picked the winner</th><th scope="col">Log loss</th></tr></thead>
+          <thead><tr><th scope="col" className="left">{m.model.games} games</th><th scope="col">Right</th><th scope="col">Log loss</th></tr></thead>
           <tbody>
             <tr><td className="left">Our model</td><td>{pct(m.model.accuracy, 1)}</td><td>{m.model.log_loss.toFixed(3)}</td></tr>
-            <tr><td className="left">Betting market</td><td>{pct(m.market.accuracy, 1)}</td><td>{m.market.log_loss.toFixed(3)}</td></tr>
+            <tr><td className="left">Market</td><td>{pct(m.market.accuracy, 1)}</td><td>{m.market.log_loss.toFixed(3)}</td></tr>
           </tbody>
         </table>
       </div>
