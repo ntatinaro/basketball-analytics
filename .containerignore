@@ -1,6 +1,7 @@
 # Keeps image builds small and free of local data and secrets.
 .git
 data
+**/data
 deploy/.env
 **/__pycache__
 **/.pytest_cache
