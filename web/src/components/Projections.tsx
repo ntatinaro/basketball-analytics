@@ -75,14 +75,17 @@ function Row({ p, stats, started }: { p: ProjectedPlayer; stats: string[]; start
           return (
             <td key={s} className="num" title={`Projected ${Math.round(r.expected)} (${range})`}>
               <div style={{ fontWeight: 700 }}>{s === "minutes" ? Math.round(actual) : actual}</div>
-              <div className="small muted">{Math.round(r.expected)} · {range}{inside ? "" : " ✗"}</div>
+              <div className="small muted" aria-hidden>{Math.round(r.expected)} · {range}{inside ? "" : " ✗"}</div>
+              <span className="sr-only">
+                projected {Math.round(r.expected)}, likely {range}{inside ? "" : ", outside the likely range"}
+              </span>
             </td>
           );
         }
         return (
           <td key={s} className="num">
             <div style={{ fontWeight: 700 }}>{Math.round(r.expected)}</div>
-            <div className="small muted">{range}</div>
+            <div className="small muted"><span className="sr-only">likely </span>{range}</div>
           </td>
         );
       })}

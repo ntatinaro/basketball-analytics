@@ -514,7 +514,10 @@ class ModelHooks:
                       best["model_version_id"], best["games"], best["champion_log_loss"],
                       best["challenger_log_loss"], best["t"]))
         self._priors.clear()
-        self.refit(conn)
+        state = self.refit(conn)
+        # The new champion's rating history for this season, so trend charts continue.
+        from hoops.models.history import rebuild
+        rebuild(conn, self.league, [state.season])
         return {"switched": True, "from": champion.model_version_id,
                 "to": best["model_version_id"], "challengers": results}
 

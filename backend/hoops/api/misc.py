@@ -106,7 +106,10 @@ def search_players(league: str, q: str = Query(min_length=1, max_length=60),
     return {"results": rows}
 
 
-def _summary(prob, won) -> dict:
+def _summary(prob, won) -> dict | None:
+    """Accuracy summary, or None for no games (an empty split would give NaN, not JSON)."""
+    if len(prob) == 0:
+        return None
     return metrics.summary(np.asarray(prob, dtype=float), np.asarray(won, dtype=float))
 
 
@@ -183,13 +186,18 @@ def _live_section(rows: list[dict]) -> dict:
 def _backtests(conn, lg) -> list[dict]:
     rows = conn.execute(
         """
+        WITH chosen AS (   -- per season: the champion's backtest, else the newest one
+            SELECT DISTINCT ON (b.season) b.season, b.model_version_id
+            FROM backtest_predictions b JOIN model_versions m USING (model_version_id)
+            WHERE m.league = %s
+            ORDER BY b.season, (m.role = 'champion') DESC, m.created_at DESC
+        )
         SELECT b.season, b.home_win_prob, b.market_home_prob, g.start_time,
                (g.home_score > g.away_score) AS home_won,
                min(g.start_time) OVER (PARTITION BY b.season) AS season_start
         FROM backtest_predictions b
-        JOIN model_versions m USING (model_version_id)
+        JOIN chosen c USING (season, model_version_id)
         JOIN games g USING (game_id)
-        WHERE m.role = 'champion' AND m.league = %s
         """,
         (str(lg),),
     ).fetchall()

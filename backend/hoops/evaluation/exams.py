@@ -248,9 +248,11 @@ def _record_challengers(conn, league, lab: Lab, table, champion: Choice, scored)
                     SET settings = EXCLUDED.settings, role = 'challenger'
                 RETURNING model_version_id
                 """,
-                (str(league), MODEL_NAME, "challenger-" + s.version.split("-")[1],
-                 json.dumps(settings)),
+                (str(league), MODEL_NAME, _member_version([s]), json.dumps(settings)),
             ).fetchone()
+            # Its backtest too, so the report card and past games keep theirs if it is
+            # ever promoted.
+            _store_backtest(conn, vid, scored_frame, lab.market)
             out.append({"model_version_id": vid, "settings": s.to_json(),
                         "tuning_log_loss": settings["tuning"]["log_loss"]})
     return out
@@ -288,6 +290,12 @@ def _record_round(conn, league, round_no, tuning, exam_season, table, choice, ex
             )
 
 
+def _member_version(members: list[ModelSettings]) -> str:
+    """Version names say what a model is, not its role: a challenger promoted to champion
+    keeps its name, and the same settings always map to the same version."""
+    return "game-" + "-".join(m.version.split("-")[1] for m in members)
+
+
 def _record_champion(conn, league, champion: Choice, scored, version_ids) -> int:
     """Stores the champion as its own model version holding member settings and
     calibrations, and marks it as the only champion."""
@@ -296,7 +304,7 @@ def _record_champion(conn, league, champion: Choice, scored, version_ids) -> int
         "calibrations": [c.to_json() for c in champion.calibrations],
         "blend": champion.is_blend, "tuned_on": scored,
     }
-    version = "champion-" + "-".join(m.version.split("-")[1] for m in champion.members)
+    version = _member_version(champion.members)
     with conn.transaction():
         conn.execute("UPDATE model_versions SET role = 'retired' WHERE league = %s"
                      " AND model_name = %s AND role = 'champion'", (str(league), MODEL_NAME))

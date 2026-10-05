@@ -259,8 +259,8 @@ export interface ReportCard {
   backtests: {
     season: number;
     model: Summary;
-    early_season: Summary;
-    rest_of_season: Summary;
+    early_season: Summary | null;
+    rest_of_season: Summary | null;
     calibration: CalibrationBin[];
     market?: MarketCompare;
   }[];

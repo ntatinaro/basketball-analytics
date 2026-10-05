@@ -90,10 +90,9 @@ test("admin panel: login, tabs, logout (when an admin password is set)", async (
   const me = await (await request.get("/api/admin/me")).json();
   const password = process.env.HOOPS_ADMIN_PASSWORD;
   test.skip(!me.enabled || !password, "admin panel switched off, or HOOPS_ADMIN_PASSWORD not given to the test");
+  // The wrong-password path is covered by the API tests: failures here would spend the
+  // shared login limit (10 per 15 minutes) and make repeated runs fail.
   await page.goto("/nba/admin");
-  await page.getByLabel("Password").fill("wrong password");
-  await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByText("Wrong password.")).toBeVisible();
   await page.getByLabel("Password").fill(password!);
   await page.getByRole("button", { name: "Log in" }).click();
   await expect(page.getByRole("table", { name: "Jobs" })).toBeVisible();
@@ -102,5 +101,14 @@ test("admin panel: login, tabs, logout (when an admin password is set)", async (
     await expect(page.getByRole(tab === "NCAA absences" ? "searchbox" : "table", { name: table })).toBeVisible();
   }
   await page.getByRole("button", { name: "Log out" }).click();
+  await expect(page.getByLabel("Password")).toBeVisible();
+
+  // An expired or cleared session goes back to the login form, not to error boxes.
+  await page.getByLabel("Password").fill(password!);
+  await page.getByRole("button", { name: "Log in" }).click();
+  await page.getByRole("tab", { name: "Data health" }).click();
+  await expect(page.getByRole("table", { name: "Jobs" })).toBeVisible();
+  await page.context().clearCookies();
+  await page.getByRole("tab", { name: "Data quality" }).click();
   await expect(page.getByLabel("Password")).toBeVisible();
 });

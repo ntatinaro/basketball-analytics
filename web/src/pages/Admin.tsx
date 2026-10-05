@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
-import { api, post } from "../api";
+import { api, ApiError, post } from "../api";
 import { pct, shortDate } from "../format";
 import { Empty, ErrorNote, Loading, Tabs } from "../components/ui";
 
@@ -15,6 +15,30 @@ function when(iso: string | null | undefined): string {
   if (!iso) return "never";
   const d = new Date(iso);
   return `${shortDate(iso)} ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+}
+
+/** Today's date where the owner is (not UTC, which is already tomorrow on a US evening). */
+function localDate(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** An admin query that sends the owner back to the login form when the session has expired
+ *  or was cleared, instead of leaving error boxes. */
+function useAdmin<T>(key: string, path: string, params: Record<string, string> = {}, refetchInterval?: number) {
+  const qc = useQueryClient();
+  return useQuery({
+    queryKey: ["admin", key, params],
+    queryFn: async () => {
+      try {
+        return await api<T>(path, params);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) await qc.invalidateQueries({ queryKey: ["admin", "me"] });
+        throw e;
+      }
+    },
+    refetchInterval,
+  });
 }
 
 export function AdminPage() {
@@ -65,7 +89,7 @@ function Login() {
 }
 
 function Health() {
-  const q = useQuery({ queryKey: ["admin", "health"], queryFn: () => api<{ jobs: Row[]; recent: Row[] }>("admin/health"), refetchInterval: 60_000 });
+  const q = useAdmin<{ jobs: Row[]; recent: Row[] }>("health", "admin/health", {}, 60_000);
   if (q.isLoading) return <Loading what="Loading job history" />;
   if (q.error || !q.data) return <ErrorNote error={q.error} />;
   const problems = q.data.recent.filter((r) => r.status !== "succeeded" || r.details?.errors);
@@ -116,7 +140,7 @@ function Health() {
 }
 
 function Quality() {
-  const q = useQuery({ queryKey: ["admin", "quality"], queryFn: () => api<{ threshold: number; seasons: Row[]; flagged_games: Row[] }>("admin/quality") });
+  const q = useAdmin<{ threshold: number; seasons: Row[]; flagged_games: Row[] }>("quality", "admin/quality");
   if (q.isLoading) return <Loading what="Loading quality reports" />;
   if (q.error || !q.data) return <ErrorNote error={q.error} />;
   const cell = (n: number, games: number) => {
@@ -165,7 +189,7 @@ function Quality() {
 }
 
 function Models() {
-  const q = useQuery({ queryKey: ["admin", "models"], queryFn: () => api<{ season: number; versions: Row[]; exams: Row[]; training_runs: Row[]; live_accuracy: Row[] }>("admin/models") });
+  const q = useAdmin<{ season: number; versions: Row[]; exams: Row[]; training_runs: Row[]; live_accuracy: Row[] }>("models", "admin/models");
   if (q.isLoading) return <Loading what="Loading models" />;
   if (q.error || !q.data) return <ErrorNote error={q.error} />;
   const versionName = (id: number) => q.data!.versions.find((v) => v.model_version_id === id);
@@ -218,12 +242,13 @@ function Models() {
         <h3>Rolling exams</h3>
         <div className="table-wrap auto-height">
           <table aria-label="Rolling exams">
-            <thead><tr><th scope="col" className="left">Model</th><th scope="col">Round</th><th scope="col" className="left">Tuned on</th><th scope="col">Examined on</th><th scope="col">Candidates</th><th scope="col" className="left">Winner</th><th scope="col" className="left">Exam result</th></tr></thead>
+            <thead><tr><th scope="col" className="left">Model</th><th scope="col">Round</th><th scope="col" className="left">Tuned on</th><th scope="col">Examined on</th><th scope="col" className="left">Candidates</th><th scope="col" className="left">Winner</th><th scope="col" className="left">Exam result</th></tr></thead>
             <tbody>
               {q.data.exams.map((e) => (
                 <tr key={`${e.model_name}-${e.exam_round}`}>
                   <td className="left">{e.model_name}</td><td>{e.exam_round}</td>
-                  <td className="left">{(e.tuning_seasons as number[]).join(", ")}</td><td>{e.exam_season}</td><td>{e.candidates}</td>
+                  <td className="left">{(e.tuning_seasons as number[]).join(", ")}</td><td>{e.exam_season}</td>
+                  <td className="left"><Candidates rows={e.table ?? []} count={e.candidates} /></td>
                   <td className="left">{e.winner}</td>
                   <td className="left small">{examText(e.winner_exam)}</td>
                 </tr>
@@ -251,6 +276,29 @@ function Models() {
   );
 }
 
+/** Every candidate of an exam round with its result on the tuning seasons, best first. */
+function Candidates({ rows, count }: { rows: Row[]; count: number }) {
+  const metric = (r: Row) => r.tuning?.log_loss ?? r.tuning?.score ?? Number.POSITIVE_INFINITY;
+  const sorted = [...rows].sort((a, b) => metric(a) - metric(b));
+  const label = sorted[0]?.tuning?.log_loss !== undefined ? "log loss" : "score";
+  return (
+    <details>
+      <summary>{count} candidates</summary>
+      <table aria-label="Candidates" className="small" style={{ marginTop: 6 }}>
+        <thead><tr><th scope="col" className="left">Version</th><th scope="col">Tuning {label}</th></tr></thead>
+        <tbody>
+          {sorted.map((r) => (
+            <tr key={r.version}>
+              <td className="left">{r.version}{r.winner ? " (winner)" : ""}</td>
+              <td>{Number.isFinite(metric(r)) ? metric(r).toFixed(4) : "–"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </details>
+  );
+}
+
 function examText(exam: Row | null): string {
   if (!exam) return "–";
   if (exam.log_loss !== undefined) {
@@ -264,10 +312,11 @@ function examText(exam: Row | null): string {
 
 function Absences() {
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ["admin", "absences"], queryFn: () => api<{ absences: Row[] }>("admin/absences", { league: "ncaam" }) });
+  const q = useAdmin<{ absences: Row[] }>("absences", "admin/absences", { league: "ncaam" });
   const [query, setQuery] = useState("");
   const [playerId, setPlayerId] = useState<number | undefined>();
-  const [startsOn, setStartsOn] = useState(new Date().toISOString().slice(0, 10));
+  const [status, setStatus] = useState("Out");
+  const [startsOn, setStartsOn] = useState(localDate());
   const [endsOn, setEndsOn] = useState("");
   const [note, setNote] = useState("");
   const found = useQuery({
@@ -276,11 +325,11 @@ function Absences() {
     enabled: query.trim().length > 1,
   });
   const add = useMutation({
-    mutationFn: () => post("admin/absences", { league: "ncaam", player_id: playerId, starts_on: startsOn, ends_on: endsOn || null, note: note || null }),
+    mutationFn: () => post("admin/absences", { league: "ncaam", player_id: playerId, status, starts_on: startsOn, ends_on: endsOn || null, note: note || null }),
     onSuccess: () => { setPlayerId(undefined); setQuery(""); setNote(""); qc.invalidateQueries({ queryKey: ["admin", "absences"] }); },
   });
   const end = useMutation({
-    mutationFn: (id: number) => post(`admin/absences/${id}/end`, { ends_on: new Date().toISOString().slice(0, 10) }),
+    mutationFn: (id: number) => post(`admin/absences/${id}/end`, { ends_on: localDate() }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "absences"] }),
   });
   return (
@@ -300,10 +349,17 @@ function Absences() {
           </div>
         )}
         <div className="row">
+          <label className="check">Status{" "}
+            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+              <option value="Out">Out (changes the prediction)</option>
+              <option value="Doubtful">Doubtful (shown only)</option>
+              <option value="Questionable">Questionable (shown only)</option>
+            </select>
+          </label>
           <label className="check">From <input type="date" value={startsOn} onChange={(e) => setStartsOn(e.target.value)} /></label>
           <label className="check">Until (optional) <input type="date" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} /></label>
         </div>
-        <input type="search" aria-label="Note" placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
+        <input type="text" aria-label="Note" placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
         <button className="btn" type="submit" disabled={!playerId || add.isPending}>Add absence</button>
         {add.error && <span className="small" style={{ color: "var(--critical)" }}>{(add.error as Error).message}</span>}
       </form>
@@ -312,11 +368,11 @@ function Absences() {
         {q.isLoading ? <Loading what="Loading absences" /> : !q.data || q.data.absences.length === 0 ? <Empty>None entered.</Empty> : (
           <div className="table-wrap auto-height">
             <table aria-label="Absences">
-              <thead><tr><th scope="col" className="left">Player</th><th scope="col" className="left">Team</th><th scope="col" className="left">From</th><th scope="col" className="left">Until</th><th scope="col" className="left">Note</th><th scope="col" /></tr></thead>
+              <thead><tr><th scope="col" className="left">Player</th><th scope="col" className="left">Team</th><th scope="col" className="left">Status</th><th scope="col" className="left">From</th><th scope="col" className="left">Until</th><th scope="col" className="left">Note</th><th scope="col" /></tr></thead>
               <tbody>
                 {q.data.absences.map((a) => (
                   <tr key={a.absence_id}>
-                    <td className="left">{a.player}</td><td className="left">{a.team}</td>
+                    <td className="left">{a.player}</td><td className="left">{a.team}</td><td className="left">{a.status}</td>
                     <td className="left">{a.starts_on}</td><td className="left">{a.ends_on ?? "until further notice"}</td>
                     <td className="left">{a.note}</td>
                     <td>{!a.ends_on && <button className="btn" onClick={() => end.mutate(a.absence_id)}>Back today</button>}</td>

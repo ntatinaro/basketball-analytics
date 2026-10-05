@@ -39,6 +39,12 @@ def test_admin_is_off_without_a_password(client, monkeypatch):
     assert login(client).status_code == 404
 
 
+def test_admin_is_off_without_a_secret_key(client, monkeypatch):
+    monkeypatch.delenv("HOOPS_SECRET_KEY")
+    assert client.get("/api/admin/me").json() == {"enabled": False, "admin": False}
+    assert login(client).status_code == 404
+
+
 def test_login_logout_and_protected_views(client, db):
     assert client.get("/api/admin/health").status_code == 401
     assert login(client, "wrong").status_code == 401

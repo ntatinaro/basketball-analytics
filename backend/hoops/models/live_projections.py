@@ -103,9 +103,18 @@ class Projector:
         rows, chance = [], {}
         for team, pts, opp_pts, b2b in ((home, home_points, away_points, home_b2b),
                                         (away, away_points, home_points, away_b2b)):
+            # The season's roster keeps everyone who played for the team; a player who has
+            # since played for another team (traded, released) is not projected here.
             roster = [p for (p,) in conn.execute(
-                "SELECT player_id FROM roster_entries WHERE season = %s AND team_id = %s",
-                (season, team))]
+                """
+                SELECT r.player_id FROM roster_entries r
+                WHERE r.season = %s AND r.team_id = %s
+                  AND NOT EXISTS (
+                      SELECT 1 FROM roster_entries o
+                      WHERE o.player_id = r.player_id AND o.season = r.season
+                        AND o.team_id <> r.team_id AND o.last_game IS NOT NULL
+                        AND (r.last_game IS NULL OR o.last_game > r.last_game))
+                """, (season, team))]
             available = [p for p in roster if p not in out]
             for p in available:
                 chance[p] = _play_chance(appearances.get((team, p)), prev_mpg.get(p))

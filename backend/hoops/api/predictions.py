@@ -72,11 +72,14 @@ def predictions_for(conn: psycopg.Connection, game_ids: list[int]) -> dict[int, 
     if missing:
         for r in conn.execute(
             """
-            SELECT b.game_id, b.home_win_prob, b.margin_home, b.total, g.home_score, g.away_score
+            SELECT DISTINCT ON (b.game_id) b.game_id, b.home_win_prob, b.margin_home, b.total,
+                   g.home_score, g.away_score
             FROM backtest_predictions b
             JOIN model_versions m USING (model_version_id)
             JOIN games g USING (game_id)
-            WHERE b.game_id = ANY(%s) AND m.role = 'champion'
+            WHERE b.game_id = ANY(%s)
+            -- the champion's backtest, else the newest (rows outlive a model switch)
+            ORDER BY b.game_id, (m.role = 'champion') DESC, m.created_at DESC
             """,
             (missing,),
         ).fetchall():

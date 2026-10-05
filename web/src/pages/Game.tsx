@@ -21,7 +21,8 @@ export function GamePage() {
     queryKey: ["projections", league, id],
     queryFn: () => api<GameProjections>(`${league}/games/${id}/projections`),
     enabled: league === "nba",
-    refetchInterval: 60_000,
+    // Finished games no longer change; live and upcoming ones refresh every minute.
+    refetchInterval: game.data?.status === "final" ? false : 60_000,
   });
   if (game.isLoading) return <main className="page"><Loading what="Loading game" /></main>;
   if (game.error || !game.data) return <main className="page"><ErrorNote error={game.error} /></main>;

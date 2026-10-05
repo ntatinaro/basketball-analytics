@@ -150,7 +150,7 @@ function GameLog({ rows }: { rows: GameLogRow[] }) {
   return (
     <div className="stack">
       {hasPlayoffs && <Segmented label="Season type" value={kind} onChange={setKind} options={[["regular", "Regular season"], ["post", "Playoffs"]]} />}
-      {hasProjections && <span className="small muted">Projected values are in brackets, from the projection locked before each game.</span>}
+      {hasProjections && <span className="small muted">Projected values are in parentheses, from the projection locked before each game.</span>}
       {shown.length === 0 ? <Empty>No games.</Empty> : (
         <div className="table-wrap">
           <table aria-label="Game log">

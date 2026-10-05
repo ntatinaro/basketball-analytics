@@ -152,10 +152,12 @@ function Backtests({ data }: { data: ReportCard }) {
         <div key={b.season} className="stack" style={{ borderTop: "1px solid var(--line)", paddingTop: 12 }}>
           <h3>{seasonLabel(b.season)}</h3>
           <Tiles s={b.model} />
-          <div className="small">
-            Early season (first 4 weeks): {pct(b.early_season.accuracy, 1)} right, log loss {b.early_season.log_loss.toFixed(3)} ·
-            Rest of season: {pct(b.rest_of_season.accuracy, 1)} right, log loss {b.rest_of_season.log_loss.toFixed(3)}
-          </div>
+          {b.early_season && b.rest_of_season && (
+            <div className="small">
+              Early season (first 4 weeks): {pct(b.early_season.accuracy, 1)} right, log loss {b.early_season.log_loss.toFixed(3)} ·
+              Rest of season: {pct(b.rest_of_season.accuracy, 1)} right, log loss {b.rest_of_season.log_loss.toFixed(3)}
+            </div>
+          )}
           {b.market && <Market m={b.market} />}
           <CalibrationChart bins={b.calibration} />
         </div>

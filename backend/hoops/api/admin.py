@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import secrets
+import logging
 import threading
 import time
 from collections import deque
@@ -33,11 +33,23 @@ MAX_FAILURES = 10                 # failed logins allowed per window, for everyo
 FAILURE_WINDOW = 15 * 60
 _failures: deque[float] = deque()
 _failures_lock = threading.Lock()
-_fallback_key = secrets.token_hex(32)   # used only if HOOPS_SECRET_KEY is unset
+log = logging.getLogger(__name__)
+
+
+def _enabled() -> bool:
+    """The panel needs both a password and a secret key. Without a fixed key, sessions
+    could not survive an API restart, so a missing key switches the panel off."""
+    settings = load_settings()
+    return settings.admin_password is not None and settings.secret_key is not None
+
+
+if load_settings().admin_password and not load_settings().secret_key:
+    log.warning("HOOPS_ADMIN_PASSWORD is set but HOOPS_SECRET_KEY is not: the admin panel"
+                " stays off until both are set")
 
 
 def _key() -> bytes:
-    return (load_settings().secret_key or _fallback_key).encode()
+    return (load_settings().secret_key or "").encode()
 
 
 def _sign(expires: int) -> str:
@@ -55,7 +67,7 @@ def _valid(token: str | None, now: float | None = None) -> bool:
 
 
 def require_admin(hoops_admin: str | None = Cookie(default=None)) -> None:
-    if load_settings().admin_password is None:
+    if not _enabled():
         raise HTTPException(404, "The admin panel is switched off.")
     if not _valid(hoops_admin):
         raise HTTPException(401, "Please log in.")
@@ -68,7 +80,7 @@ class Login(BaseModel):
 @router.post("/login")
 def login(body: Login, response: Response):
     password = load_settings().admin_password
-    if password is None:
+    if not _enabled() or password is None:
         raise HTTPException(404, "The admin panel is switched off.")
     now = time.time()
     with _failures_lock:
@@ -92,7 +104,7 @@ def logout(response: Response):
 
 @router.get("/me")
 def me(hoops_admin: str | None = Cookie(default=None)):
-    enabled = load_settings().admin_password is not None
+    enabled = _enabled()
     return {"enabled": enabled, "admin": enabled and _valid(hoops_admin)}
 
 

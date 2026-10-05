@@ -170,3 +170,18 @@ def test_projections_api_and_game_log(db, league, monkeypatch):  # noqa: F811
         assert client.get("/api/nba/games/999999/projections").status_code == 404
     deps._pool.close()
     deps._pool = None
+
+
+def test_traded_players_are_not_projected_for_their_old_team(db, league):  # noqa: F811
+    players = add_players(db, league)
+    traded = players[league[1]][0]
+    db.execute("UPDATE roster_entries SET last_game = '2025-12-01' WHERE player_id = %s",
+               (traded,))
+    db.execute("INSERT INTO roster_entries (player_id, team_id, season, last_game)"
+               " VALUES (%s, %s, 2026, '2026-01-10')", (traded, league[3]))
+    hooks = ModelHooks(League.NBA)
+    game_id = add_upcoming(db, league, 20)
+    hooks.refresh(db, now=NOW)
+    set_id, _ = latest_set(db, game_id)
+    rows = projected(db, set_id)
+    assert traded not in rows and len(rows) == 15
