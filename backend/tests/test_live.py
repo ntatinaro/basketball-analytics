@@ -172,3 +172,80 @@ def test_overnight_grades_locked_predictions_that_were_missed(db, league):
                " WHERE game_id = %s", (game_id,))      # final, but the worker was down
     assert hooks.grade_missing(db) == 1
     assert hooks.grade_missing(db) == 0                # nothing left to grade
+
+
+def add_challenger(db, **changes) -> int:
+    import json
+    from dataclasses import replace
+
+    from hoops.models.config import DEFAULT
+
+    settings = replace(DEFAULT, **changes)
+    return db.execute(
+        "INSERT INTO model_versions (league, model_name, version, settings, role)"
+        " VALUES ('nba', 'game_predictor', %s, %s, 'challenger') RETURNING model_version_id",
+        (f"challenger-{settings.version}", json.dumps({"members": [settings.to_json()]})),
+    ).fetchone()[0]
+
+
+def test_challengers_predict_quietly_and_lock_with_the_champion(db, league):
+    challenger = add_challenger(db, half_life_days=20.0)
+    hooks = ModelHooks(League.NBA)
+    game_id = add_upcoming(db, league, 20)
+    assert hooks.refresh(db, now=NOW) == 1               # counts public predictions only
+    shadow = db.execute("SELECT model_version_id, is_locked FROM predictions"
+                        " WHERE game_id = %s AND is_shadow", (game_id,)).fetchall()
+    assert shadow == [(challenger, False)]
+    hooks.refresh(db, now=NOW)                           # unchanged: nothing new
+    assert db.execute("SELECT count(*) FROM predictions WHERE is_shadow").fetchone()[0] == 1
+
+    hooks.lock(db, game_id, NOW)
+    db.execute("UPDATE games SET status = 'final', home_score = 101, away_score = 99"
+               " WHERE game_id = %s", (game_id,))
+    assert hooks.grade(db, game_id) == 2                 # public and shadow
+    assert db.execute("SELECT count(*) FROM predictions p JOIN prediction_grades USING"
+                      " (prediction_id) WHERE p.is_shadow").fetchone()[0] == 1
+
+
+def graded_pairs(db, league, champion: int, challenger: int, n: int, champ_ll, chal_ll):
+    import random
+
+    rng = random.Random(4)
+    for i in range(n):
+        (game_id,) = db.execute(
+            "INSERT INTO games (league, espn_id, season, season_type, start_time, home_team_id,"
+            " away_team_id, status, home_score, away_score) VALUES ('nba', %s, 2026,"
+            " 'regular', %s, %s, %s, 'final', 100, 90) RETURNING game_id",
+            (f"cp-{champion}-{challenger}-{i}", NOW - timedelta(days=1, minutes=i),
+             league[1], league[2])).fetchone()
+        for vid, ll, shadow in ((champion, champ_ll, False), (challenger, chal_ll, True)):
+            noisy = max(0.05, ll + rng.gauss(0, 0.05))
+            (pid,) = db.execute(
+                "INSERT INTO predictions (game_id, model_version_id, home_win_prob,"
+                " margin_home, total, is_locked, is_shadow, inputs_hash) VALUES"
+                " (%s, %s, 0.6, 3, 220, true, %s, 'x') RETURNING prediction_id",
+                (game_id, vid, shadow)).fetchone()
+            db.execute("INSERT INTO prediction_grades (prediction_id, home_won, actual_margin,"
+                       " actual_total, log_loss, brier, margin_error, total_error)"
+                       " VALUES (%s, true, 10, 190, %s, 0.2, 7, -30)", (pid, noisy))
+
+
+def test_checkpoint_switches_only_to_a_clearly_better_challenger(db, league):
+    from hoops.models.live import CHECKPOINT_MIN_GAMES, load_champion
+
+    hooks = ModelHooks(League.NBA)
+    champion = load_champion(db, League.NBA).model_version_id
+    close = add_challenger(db, half_life_days=20.0)
+    better = add_challenger(db, half_life_days=90.0)
+    graded_pairs(db, league, champion, close, CHECKPOINT_MIN_GAMES, 0.62, 0.619)
+    assert hooks.checkpoint(db)["switched"] is False      # too close to call
+    graded_pairs(db, league, champion, better, CHECKPOINT_MIN_GAMES, 0.62, 0.60)
+    result = hooks.checkpoint(db)
+    assert result["switched"] is True and result["to"] == better
+    roles = dict(db.execute("SELECT model_version_id, role FROM model_versions"
+                            " WHERE model_version_id IN (%s, %s)", (champion, better)).fetchall())
+    assert roles == {champion: "challenger", better: "champion"}
+    switch = db.execute("SELECT from_version_id, to_version_id, games FROM model_switches"
+                        ).fetchone()
+    assert switch == (champion, better, CHECKPOINT_MIN_GAMES)
+    assert hooks.checkpoint(db)["switched"] is False      # no new games since the switch

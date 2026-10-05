@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import psycopg
+from psycopg.rows import tuple_row
 
 from hoops.leagues import COUNTED_SEASON_TYPES, League
 
@@ -32,7 +33,8 @@ class SeasonQuality:
 
 
 def season_quality(conn: psycopg.Connection, league: League) -> list[SeasonQuality]:
-    rows = conn.execute(
+    # Tuple rows whatever the connection's default (the API's pool returns dicts).
+    rows = conn.cursor(row_factory=tuple_row).execute(
         """
         SELECT g.season, count(*),
                count(*) FILTER (WHERE NOT g.team_quality_ok),
@@ -52,7 +54,7 @@ def season_quality(conn: psycopg.Connection, league: League) -> list[SeasonQuali
 
 
 def issue_breakdown(conn: psycopg.Connection, league: League, season: int) -> list[tuple]:
-    return conn.execute(
+    return conn.cursor(row_factory=tuple_row).execute(
         """
         SELECT i.check_group, i.check_name, count(*)
         FROM data_quality_issues i JOIN games g USING (game_id)

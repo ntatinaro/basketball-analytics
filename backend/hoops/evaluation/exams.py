@@ -30,6 +30,7 @@ from hoops.models.predictor import Calibration
 
 log = logging.getLogger(__name__)
 MODEL_NAME = "game_predictor"
+CHALLENGERS = 2          # shadow models registered after the exams
 TIE_MARGIN = 0.0015          # log-loss differences smaller than this count as a tie
 BLEND_SIZE = 3
 
@@ -210,7 +211,7 @@ def run_exams(conn: psycopg.Connection, league: League, warmup: int, scored: lis
                  choice.label, exam_metrics["log_loss"],
                  f"{bench['market']['log_loss']:.4f}" if bench["market"] else "none")
 
-    champion, _ = choose(lab, pool, scored)
+    champion, final_table = choose(lab, pool, scored)
     champion_preds = predict_choice(lab, champion, scored)
     report["champion"] = {
         "members": [m.to_json() for m in champion.members], "blend": champion.is_blend,
@@ -220,7 +221,39 @@ def run_exams(conn: psycopg.Connection, league: League, warmup: int, scored: lis
     champion_id = _record_champion(conn, league, champion, scored, version_ids)
     _store_backtest(conn, champion_id, champion_preds, lab.market)
     report["champion_model_version_id"] = champion_id
+    report["challengers"] = _record_challengers(conn, league, lab, final_table, champion,
+                                                scored)
     return report
+
+
+def _record_challengers(conn, league, lab: Lab, table, champion: Choice, scored) -> list[dict]:
+    """The next-best candidates on all scored seasons become challengers (shadow models):
+    they predict every game quietly, and a checkpoint promotes one only if it has been
+    clearly better live. Earlier challengers are retired."""
+    taken = {m.version for m in champion.members}
+    picks = [s for _, s in table if s.version not in taken][:CHALLENGERS]
+    out = []
+    with conn.transaction():
+        conn.execute("UPDATE model_versions SET role = 'retired' WHERE league = %s"
+                     " AND model_name = %s AND role = 'challenger'", (str(league), MODEL_NAME))
+        for s in picks:
+            scored_frame, cal = evaluate(lab, s, scored)
+            settings = {"members": [s.to_json()], "calibrations": [cal.to_json()],
+                        "blend": False, "tuned_on": scored, "tuning": _summary(scored_frame)}
+            (vid,) = conn.execute(
+                """
+                INSERT INTO model_versions (league, model_name, version, settings, role)
+                VALUES (%s, %s, %s, %s, 'challenger')
+                ON CONFLICT (league, model_name, version) DO UPDATE
+                    SET settings = EXCLUDED.settings, role = 'challenger'
+                RETURNING model_version_id
+                """,
+                (str(league), MODEL_NAME, "challenger-" + s.version.split("-")[1],
+                 json.dumps(settings)),
+            ).fetchone()
+            out.append({"model_version_id": vid, "settings": s.to_json(),
+                        "tuning_log_loss": settings["tuning"]["log_loss"]})
+    return out
 
 
 def _model_version(conn, league: League, settings: ModelSettings) -> int:

@@ -24,6 +24,7 @@ export function ReportCardPage() {
       {card.isLoading && <Loading what="Loading report card" />}
       {card.error && <ErrorNote error={card.error} />}
       {card.data && <Live data={card.data} />}
+      {card.data?.model_switches && card.data.model_switches.length > 0 && <Switches data={card.data} />}
       {card.data && <Backtests data={card.data} />}
     </main>
   );
@@ -112,6 +113,26 @@ function Live({ data }: { data: ReportCard }) {
           </div>
         </>
       )}
+    </section>
+  );
+}
+
+function Switches({ data }: { data: ReportCard }) {
+  return (
+    <section className="card">
+      <h2>Model updates</h2>
+      <p className="small muted">
+        A few alternative models predict every game quietly. Once a month, one replaces the main model only if it
+        has been clearly better on the same games.
+      </p>
+      <ul className="stack" style={{ margin: 0, paddingLeft: 18 }}>
+        {data.model_switches!.map((s) => (
+          <li key={s.switched_at}>
+            {shortDate(s.switched_at)}: a new model took over after beating the previous one over {s.games} games
+            (log loss {s.challenger_log_loss.toFixed(3)} vs. {s.champion_log_loss.toFixed(3)}).
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

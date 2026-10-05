@@ -64,6 +64,7 @@ SELECT (SELECT max(updated_at) FROM games WHERE league = %(league)s) AS games,
        (SELECT max(snapshot_time) FROM injury_snapshots) AS injuries,
        (SELECT max(graded_at) FROM prediction_grades) AS grades,
        (SELECT max(created_at) FROM model_versions) AS models,
+       (SELECT max(switched_at) FROM model_switches) AS switches,
        (SELECT refreshed_at FROM screen_refreshes) AS screens,
        (SELECT max(created_at) FROM projection_sets) AS projections,
        (SELECT max(graded_at) FROM projection_grades) AS projection_grades

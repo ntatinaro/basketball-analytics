@@ -8,6 +8,22 @@ export class ApiError extends Error {
   }
 }
 
+export async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`/api/${path}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail ?? detail;
+    } catch {
+      /* keep status text */
+    }
+    throw new ApiError(res.status, typeof detail === "string" ? detail : "Request failed");
+  }
+  return res.json() as Promise<T>;
+}
+
 export async function api<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T> {
   const query = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") query.set(k, String(v));
@@ -221,8 +237,14 @@ export interface MarketCompare {
   note?: string;
 }
 
+export interface ModelSwitch {
+  switched_at: string; games: number; champion_log_loss: number; challenger_log_loss: number;
+  from_version: string; to_version: string;
+}
+
 export interface ReportCard {
   season: number;
+  model_switches?: ModelSwitch[];
   live: {
     games: number;
     model?: Summary;

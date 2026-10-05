@@ -133,7 +133,16 @@ def report_card(league: str, season: int | None = None,
             """,
             (str(lg), s),
         ).fetchall()
-        return {"season": s, "live": _live_section(live), "backtests": _backtests(conn, lg)}
+        switches = conn.execute(
+            """
+            SELECT s.switched_at, s.games, s.champion_log_loss, s.challenger_log_loss,
+                   f.version AS from_version, t.version AS to_version
+            FROM model_switches s JOIN model_versions f ON f.model_version_id = s.from_version_id
+            JOIN model_versions t ON t.model_version_id = s.to_version_id
+            WHERE s.league = %s ORDER BY s.switched_at DESC
+            """, (str(lg),)).fetchall()
+        return {"season": s, "live": _live_section(live), "backtests": _backtests(conn, lg),
+                "model_switches": switches}
 
     return cached(conn, lg, ("report", s), build)
 

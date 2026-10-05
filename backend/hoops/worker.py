@@ -84,6 +84,9 @@ def run(settings: Settings) -> None:
                           id=f"{league}-injuries", name=f"{league}-injuries")
         scheduler.add_job(logged("game_watcher", jobs.game_watcher), "interval", minutes=1,
                           id=f"{league}-watcher", name=f"{league}-watcher")
+        scheduler.add_job(logged("model_checkpoint", jobs.model_checkpoint), "cron", day=1,
+                          hour=4, minute=45, id=f"{league}-checkpoint",
+                          name=f"{league}-checkpoint")
         scheduler.add_job(logged("overnight", jobs.overnight), "cron", hour=4, minute=15,
                           id=f"{league}-overnight", name=f"{league}-overnight")
     log.info("worker started for %s (rehearsal=%s)",

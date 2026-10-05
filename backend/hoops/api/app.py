@@ -5,12 +5,13 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.gzip import GZipMiddleware
 
-from hoops.api import games, misc, players, projections, teams
+from hoops.api import admin, games, misc, players, projections, teams
 
 app = FastAPI(title="hoops", docs_url="/api/docs", openapi_url="/api/openapi.json",
               redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
-for router in (misc.router, games.router, projections.router, teams.router, players.router):
+for router in (misc.router, games.router, projections.router, teams.router, players.router,
+               admin.router):
     app.include_router(router)
 
 

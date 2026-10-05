@@ -53,6 +53,8 @@ class GameHooks(Protocol):
 
     def refresh(self, conn: psycopg.Connection, league: League) -> int: ...
 
+    def checkpoint(self, conn: psycopg.Connection, league: League) -> dict: ...
+
 
 class NoModelHooks:
     """Used until models are attached: data jobs still run."""
@@ -71,6 +73,9 @@ class NoModelHooks:
 
     def refresh(self, conn, league) -> int:
         return 0
+
+    def checkpoint(self, conn, league) -> dict:
+        return {}
 
 
 @dataclass
@@ -237,6 +242,10 @@ class Jobs:
             self.loader.store.write_line(game_id, line, "espn_close", raw.fetched_at)
 
     # -- overnight --------------------------------------------------------------------
+
+    def model_checkpoint(self) -> dict:
+        """Monthly: lets a clearly better challenger replace the champion."""
+        return self.hooks.checkpoint(self.conn, self.league)
 
     def overnight(self, now: datetime | None = None) -> dict:
         """Re-pulls the previous day's finished games for official corrections, retries

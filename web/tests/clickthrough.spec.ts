@@ -85,3 +85,22 @@ test("projections tab shows ranges for an upcoming game, when projections exist"
   await page.getByLabel("Full projection").check();
   await expect(table.getByRole("columnheader", { name: "FGA" })).toBeVisible();
 });
+
+test("admin panel: login, tabs, logout (when an admin password is set)", async ({ page, request }) => {
+  const me = await (await request.get("/api/admin/me")).json();
+  const password = process.env.HOOPS_ADMIN_PASSWORD;
+  test.skip(!me.enabled || !password, "admin panel switched off, or HOOPS_ADMIN_PASSWORD not given to the test");
+  await page.goto("/nba/admin");
+  await page.getByLabel("Password").fill("wrong password");
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(page.getByText("Wrong password.")).toBeVisible();
+  await page.getByLabel("Password").fill(password!);
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(page.getByRole("table", { name: "Jobs" })).toBeVisible();
+  for (const [tab, table] of [["Data quality", "Quality by season"], ["Models", "Model versions"], ["NCAA absences", "Find player"]]) {
+    await page.getByRole("tab", { name: tab }).click();
+    await expect(page.getByRole(tab === "NCAA absences" ? "searchbox" : "table", { name: table })).toBeVisible();
+  }
+  await page.getByRole("button", { name: "Log out" }).click();
+  await expect(page.getByLabel("Password")).toBeVisible();
+});
