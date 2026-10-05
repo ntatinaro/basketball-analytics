@@ -37,12 +37,13 @@ export function PlayersPage() {
   });
 
   const qualifier = qualifierFor(sorting[0]?.id);
-  const rows = (players.data?.players ?? []).filter(
+  // Memoized so sorting re-sorts the same rows instead of rebuilding the whole table.
+  const rows = useMemo(() => (players.data?.players ?? []).filter(
     (r) =>
       positionFilter(position)(r) &&
       matches(query, [r.name]) &&
       (!qualifiedOnly || scope === "team" || query !== "" || r.qualified[qualifier]),
-  );
+  ), [players.data, position, query, qualifiedOnly, scope, qualifier]);
   const columns = useMemo(() => playerColumns(league, scope !== "team"), [league, scope]);
   const scopes: [Scope, string][] = league === "nba"
     ? [["team", "Team"], ["league", "League"]]

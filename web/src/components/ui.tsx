@@ -92,6 +92,15 @@ export function Headshot({ src, alt, large = false }: { src?: string | null; alt
   return <SafeImage src={src} alt={alt} className={large ? "headshot-lg" : "headshot"} />;
 }
 
+/** Lightweight image for table rows: no component state, hidden if it fails to load. */
+export function RowImage({ src, className }: { src?: string | null; className: string }) {
+  if (!src) return <span className={className} aria-hidden />;
+  return (
+    <img className={className} src={src} alt="" loading="lazy" decoding="async"
+      onError={(e) => { e.currentTarget.style.visibility = "hidden"; }} />
+  );
+}
+
 export function ProbBar({ homeProb, label }: { homeProb: number; label: string }) {
   return (
     <div className="prob-bar" role="img" aria-label={label}>

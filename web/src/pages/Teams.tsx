@@ -1,11 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { createColumnHelper, type SortingState } from "@tanstack/react-table";
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { api, type TeamRow } from "../api";
 import { fixed, seasonLabel, signed } from "../format";
 import { DataTable } from "../components/DataTable";
-import { ErrorNote, Loading, SeasonPicker, Segmented, TeamLogo, useLeague, useSeasonParam } from "../components/ui";
+import { ErrorNote, Loading, RowImage, SeasonPicker, Segmented, useLeague, useSeasonParam } from "../components/ui";
 import { matches } from "../search";
 
 const col = createColumnHelper<TeamRow>();
@@ -26,10 +25,10 @@ export function TeamsPage() {
       header: "Team",
       meta: { left: true },
       cell: (c) => (
-        <Link to={`/${league}/teams/${c.row.original.id}${season ? `?season=${season}` : ""}`} className="player-cell">
-          <TeamLogo src={c.row.original.logo} alt="" />
+        <a href={`/${league}/teams/${c.row.original.id}${season ? `?season=${season}` : ""}`} className="player-cell">
+          <RowImage src={c.row.original.logo} className="logo" />
           <span className="link">{c.row.original.name}</span>
-        </Link>
+        </a>
       ),
     }),
     col.accessor("rank", { header: "Rank", meta: { title: "League rank by overall rating" }, sortDescFirst: false,
@@ -52,9 +51,9 @@ export function TeamsPage() {
     col.accessor("conference_abbr", { header: "Conf", meta: { left: true }, cell: (c) => c.getValue() ?? "–" }),
   ], [league, season]);
 
-  const rows = (teams.data?.teams ?? []).filter(
+  const rows = useMemo(() => (teams.data?.teams ?? []).filter(
     (t) => (scope === "all" || t.conference_abbr === scope) && matches(query, [t.name, t.abbreviation, t.location ?? ""]),
-  );
+  ), [teams.data, scope, query]);
 
   return (
     <main className="page">

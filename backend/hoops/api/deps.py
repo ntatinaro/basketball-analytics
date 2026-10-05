@@ -63,7 +63,8 @@ SELECT (SELECT max(updated_at) FROM games WHERE league = %(league)s) AS games,
        (SELECT max(as_of) FROM team_ratings) AS ratings,
        (SELECT max(snapshot_time) FROM injury_snapshots) AS injuries,
        (SELECT max(graded_at) FROM prediction_grades) AS grades,
-       (SELECT max(created_at) FROM model_versions) AS models
+       (SELECT max(created_at) FROM model_versions) AS models,
+       (SELECT refreshed_at FROM screen_refreshes) AS screens
 """
 
 

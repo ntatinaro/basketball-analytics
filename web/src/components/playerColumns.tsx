@@ -1,8 +1,7 @@
 import { createColumnHelper } from "@tanstack/react-table";
-import { Link } from "react-router-dom";
 import type { League, PlayerRow } from "../api";
 import { fixed } from "../format";
-import { Headshot, Segmented } from "./ui";
+import { RowImage, Segmented } from "./ui";
 
 const col = createColumnHelper<PlayerRow>();
 
@@ -28,13 +27,13 @@ export function playerColumns(league: League, withTeam: boolean) {
         const r = c.row.original;
         const team = r.is_total ? r.teams.join("/") : r.team;
         return (
-          <Link to={`/${league}/players/${r.player_id}`} className="player-cell">
-            <Headshot src={r.headshot} alt="" />
+          <a href={`/${league}/players/${r.player_id}`} className="player-cell">
+            <RowImage src={r.headshot} className="headshot" />
             <span className="player-name">
               <span className="link">{r.name}</span>
               <span className="muted small">{[withTeam ? team : null, r.position].filter(Boolean).join(" · ")}</span>
             </span>
-          </Link>
+          </a>
         );
       },
     }),

@@ -7,7 +7,8 @@ import {
   type SortingState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useRef } from "react";
+import { useRef, type MouseEvent } from "react";
+import { useNavigate } from "react-router-dom";
 
 /**
  * Sortable table. Tap a header to sort, tap again to reverse. Only the visible rows are
@@ -43,12 +44,20 @@ export function DataTable<T>({
   });
   const rows = table.getRowModel().rows;
   const parentRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+  // Cells use plain links; one handler routes them in-app (cheaper than a router link per row).
+  const onClick = (e: MouseEvent) => {
+    const link = (e.target as HTMLElement).closest("a[href^='/']");
+    if (!link || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    navigate(link.getAttribute("href")!);
+  };
   const virtual = !autoHeight && rows.length > 60;
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 41,
-    overscan: 12,
+    overscan: 6,
     enabled: virtual,
   });
   const items = virtual ? virtualizer.getVirtualItems() : [];
@@ -58,7 +67,7 @@ export function DataTable<T>({
   const colCount = table.getVisibleLeafColumns().length;
 
   return (
-    <div className={`table-wrap${autoHeight ? " auto-height" : ""}`} ref={parentRef}>
+    <div className={`table-wrap${autoHeight ? " auto-height" : ""}`} ref={parentRef} onClick={onClick}>
       <table aria-label={label}>
         <thead>
           {table.getHeaderGroups().map((group) => (

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { type SortingState } from "@tanstack/react-table";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type PerGame, type TeamDetail } from "../api";
 import { fixed, pct, seasonLabel, shortDate, signed } from "../format";
@@ -133,7 +133,7 @@ function Roster({ d }: { d: TeamDetail }) {
   const league = useLeague();
   const [position, setPosition] = useState("All");
   const [sorting, setSorting] = useState<SortingState>([{ id: "ppg", desc: true }]);
-  const rows = d.roster.filter(positionFilter(position));
+  const rows = useMemo(() => d.roster.filter(positionFilter(position)), [d.roster, position]);
   return (
     <div className="stack">
       <div className="row">

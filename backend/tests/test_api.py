@@ -127,7 +127,53 @@ def test_predictions_lock_and_cache_invalidation(client, db):
     assert 0 < after["prediction"]["home_win_prob"] < 1
 
 
+def test_screen_table_refresh_reaches_the_api(client, db):
+    before = len(client.get("/api/nba/players").json()["players"])
+    db.execute("DELETE FROM player_game_stats")
+    refresh_screen_tables(db)
+    assert before > 0
+    assert client.get("/api/nba/players").json()["players"] == []
+
+
 def test_report_card_shape(client):
     card = client.get("/api/nba/report-card").json()
     assert card["season"] == 2026
     assert card["live"]["games"] == 0 and card["backtests"] == []
+
+
+def test_data_delayed_note_follows_worker_health(db):
+    from hoops.api.deps import data_freshness
+
+    now = datetime(2026, 4, 10, 23, 30, tzinfo=UTC)
+    teams = [r[0] for r in db.execute("SELECT team_id FROM teams LIMIT 2")] or []
+    if len(teams) < 2:
+        for i in (1, 2):
+            teams.append(db.execute(
+                "INSERT INTO teams (league, espn_id, abbreviation, display_name)"
+                " VALUES ('nba', %s, %s, %s) RETURNING team_id", (f"t{i}", f"T{i}", f"Team {i}"),
+            ).fetchone()[0])
+    db.execute(
+        "INSERT INTO games (league, espn_id, season, season_type, start_time, home_team_id,"
+        " away_team_id, status) VALUES ('nba', 'live-1', 2026, 'regular', %s, %s, %s, 'live')",
+        (now - timedelta(minutes=20), teams[0], teams[1]),
+    )
+
+    def watcher_run(minutes_ago: int, status: str) -> None:
+        finished = now - timedelta(minutes=minutes_ago)
+        db.execute("INSERT INTO job_runs (job_name, league, started_at, finished_at, status)"
+                   " VALUES ('game_watcher', 'nba', %s, %s, %s)", (finished, finished, status))
+
+    import psycopg
+    from psycopg.rows import dict_row
+
+    api_conn = psycopg.connect(os.environ["HOOPS_TEST_DATABASE_URL"], autocommit=True,
+                               row_factory=dict_row)
+    # ESPN outage: the watcher has been failing during a live game.
+    watcher_run(30, "succeeded")
+    for m in (5, 4, 3, 2, 1):
+        watcher_run(m, "failed")
+    assert data_freshness(api_conn, League.NBA, now)["delayed"] is True
+    # Recovery: one successful run clears the note.
+    watcher_run(0, "succeeded")
+    assert data_freshness(api_conn, League.NBA, now)["delayed"] is False
+    api_conn.close()
