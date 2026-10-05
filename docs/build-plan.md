@@ -1,7 +1,7 @@
 # Basketball Analytics App: Build Plan
 
 Last updated: 2026-10-05
-Companion documents: `../basketball-analytics-feature-spec.md` (features, screens, versions) and `../basketball-analytics-technical-architecture.md` (stack, data, models, deployment). Section numbers below refer to the architecture doc unless they say "spec".
+Companion documents: `feature-spec.md` (features, screens, versions) and `technical-architecture.md` (stack, data, models, deployment). Section numbers below refer to the architecture doc unless they say "spec".
 
 ## How to use this plan
 
@@ -29,16 +29,16 @@ Goal: an empty but working project skeleton, locally and in CI.
 
 Depends on: architecture sign-off.
 
-- [ ] Create the repository layout (section 15): `/backend`, `/web`, `/deploy`, `/.github/workflows`.
-- [ ] Backend package `hoops` with `pyproject.toml`, Python 3.13, lint (ruff) and test (pytest) setup.
-- [ ] `leagues.py`: league rules (periods, period length, overtime, shot clock, garbage-time windows) and the capability matrix (section 6).
-- [ ] Settings loaded from environment variables; `deploy/.env.example` listing every setting.
-- [ ] Database migration runner and the first migration: reference tables, game data tables, operations tables (section 7).
-- [ ] Database trigger that rejects updates and deletes on `predictions`, with a test.
-- [ ] Local development setup: Postgres in a Podman container, one command to start it.
-- [ ] GitHub Actions workflow: lint and tests on every push, with a Postgres service for database tests.
+- [x] Create the repository layout (section 15): `/backend`, `/deploy`, `/.github/workflows`. (`/web` is created in Sprint 1.6.)
+- [x] Backend package `hoops` with `pyproject.toml`, Python 3.13, lint (ruff) and test (pytest) setup.
+- [x] `leagues.py`: league rules (periods, period length, overtime, shot clock, garbage-time windows) and the capability matrix (section 6).
+- [x] Settings loaded from environment variables; `deploy/.env.example` listing every setting.
+- [x] Database migration runner and the first migration: reference, game data, model management, model output, and operations tables (section 7). The precomputed screen tables come in Sprint 1.5.
+- [x] Database trigger that rejects updates, deletes, and truncation on `predictions`, with a test.
+- [x] Local development setup: Postgres 17 in a Podman container, one command to start it (`deploy/dev-db.sh`).
+- [x] GitHub Actions workflow: lint and tests on every push, with a Postgres 17 service for database tests.
 
-Done when: CI is green on an empty skeleton, and migrations create every V1 table on a fresh database.
+Done when: CI is green on the skeleton, and migrations create every V1 table through Sprint 1.4 on a fresh database.
 
 ### Sprint 1.2: ESPN ingestion and NBA backfill
 

@@ -1,7 +1,7 @@
 # Basketball Analytics App: Feature Spec
 
 Last updated: 2026-10-05 (updated at the end of the architecture phase)
-Companion document: `basketball-analytics-technical-architecture.md`
+Companion document: `technical-architecture.md`
 
 ## 1. Context for a new session
 
