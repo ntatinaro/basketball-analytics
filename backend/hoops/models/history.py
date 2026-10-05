@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import psycopg
 
+from hoops.db.refresh import mark_data_changed
 from hoops.evaluation.backtest import load_season
 from hoops.leagues import League
 from hoops.models.live import load_champion
@@ -41,11 +42,19 @@ def rebuild(conn: psycopg.Connection, league: League, seasons: list[int]) -> int
         roster_net = roster_strength(sd.opening_roster(), values) if len(values) else {}
         priors = season_priors(final, roster_net, settings)
         rows = []
+        # A team's history ends with its last game: refits after that (while others play
+        # on) only age its games and pull it back toward the preseason starting rating.
+        last_day = pd.concat([
+            sd.games.groupby("home_team_id")["game_date"].max(),
+            sd.games.groupby("away_team_id")["game_date"].max(),
+        ]).groupby(level=0).max().to_dict()
         for day in sorted(sd.games["game_date"].unique()):
             as_of = datetime.combine(day + timedelta(days=1), time(4, 0), EASTERN)
             past = sd.games[sd.games["start_time"] < as_of]
             r = fit_team_ratings(past, sd.team_ids, priors, settings, as_of)
             for row in r.frame().itertuples(index=False):
+                if day > last_day.get(int(row.team_id), day):
+                    continue
                 rows.append((int(row.team_id), season, as_of, champion.model_version_id,
                              int(row.games_played), float(row.overall), float(row.offense),
                              float(row.defense), float(row.overall_se), float(row.offense_se),
@@ -79,6 +88,7 @@ def rebuild(conn: psycopg.Connection, league: League, seasons: list[int]) -> int
             _store_values(conn, season, champion.model_version_id, values)
         written += len(rows)
         log.info("%s %d: %d rating rows", league, season, len(rows))
+    mark_data_changed(conn)
     return written
 
 

@@ -135,6 +135,16 @@ def test_screen_table_refresh_reaches_the_api(client, db):
     assert client.get("/api/nba/players").json()["players"] == []
 
 
+def test_rewritten_rating_history_reaches_the_api(client, db):
+    from hoops.db.refresh import mark_data_changed
+
+    before = client.get("/api/nba/teams").json()["teams"]
+    db.execute("UPDATE team_ratings SET overall = overall + 5")   # same timestamps
+    mark_data_changed(db)
+    after = client.get("/api/nba/teams").json()["teams"]
+    assert after[0]["rating"] == pytest.approx(before[0]["rating"] + 5)
+
+
 def test_report_card_shape(client):
     card = client.get("/api/nba/report-card").json()
     assert card["season"] == 2026

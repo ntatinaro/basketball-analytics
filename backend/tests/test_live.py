@@ -124,3 +124,27 @@ def test_preseason_games_only_predicted_in_rehearsal(db, league):
     assert ModelHooks(League.NBA, rehearsal=True).refresh(db, now=NOW) == 1
     assert db.execute("SELECT is_rehearsal FROM predictions WHERE game_id = %s",
                       (game_id,)).fetchone()[0] is True
+
+
+def test_rating_history_stops_at_each_teams_last_game(db, league):
+    from hoops.models.history import rebuild
+
+    last = db.execute("SELECT max(start_time) FROM games WHERE season = 2026").fetchone()[0]
+    db.execute(   # a late game for two teams only, like a playoff series
+        "INSERT INTO games (league, espn_id, season, season_type, start_time, home_team_id,"
+        " away_team_id, status, home_score, away_score, team_quality_ok, player_quality_ok,"
+        " pbp_quality_ok) SELECT 'nba', 'late', 2026, 'post', %s + interval '14 days',"
+        " home_team_id, away_team_id, 'final', home_score, away_score, true, true, true"
+        " FROM games WHERE season = 2026 AND start_time = %s LIMIT 1 RETURNING game_id",
+        (last, last),
+    )
+    db.execute("INSERT INTO team_game_stats SELECT (SELECT game_id FROM games WHERE"
+               " espn_id = 'late'), team_id, opponent_id, is_home, pts, fgm, fga, fg3m, fg3a,"
+               " ftm, fta, oreb, dreb, ast, stl, blk, tov, pf, possessions, pts_excl_garbage,"
+               " possessions_excl_garbage FROM team_game_stats WHERE game_id = (SELECT game_id"
+               " FROM games WHERE season = 2026 AND start_time = %s LIMIT 1)", (last,))
+    assert rebuild(db, League.NBA, [2025, 2026]) > 0
+    final_day = db.execute(
+        "SELECT team_id, max(as_of) FROM team_ratings WHERE season = 2026 GROUP BY 1").fetchall()
+    late = [d for _, d in final_day if d > last + timedelta(days=7)]
+    assert len(late) == 2                     # only the two teams still playing
