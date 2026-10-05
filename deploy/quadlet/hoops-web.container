@@ -1,0 +1,17 @@
+[Unit]
+Description=hoops: website and internal web server
+Requires=hoops-api.service
+After=hoops-api.service
+
+[Container]
+ContainerName=hoops-web
+Image=localhost/hoops-web:latest
+Network=hoops.network
+# Only reachable from the VPS itself; the owner's Caddy forwards public traffic here.
+PublishPort=127.0.0.1:8080:8080
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

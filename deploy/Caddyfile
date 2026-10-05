@@ -1,0 +1,22 @@
+# Internal web server for the app stack. Public HTTPS is handled by the owner's existing
+# Caddy, which forwards hoops.<domain> to this server on port 8080.
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy hoops-api:8000
+	}
+
+	handle {
+		root * /srv
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Basketball prediction and analytics engine for the NBA and NCAA Division I men's basketball"
 requires-python = ">=3.13"
 dependencies = [
+    "apscheduler>=3.10,<4",
     "httpx>=0.28.1",
     "psycopg[binary]>=3.2",
 ]

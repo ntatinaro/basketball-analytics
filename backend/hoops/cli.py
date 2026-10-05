@@ -49,6 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--league", type=League, choices=list(League), required=True)
     p.add_argument("--season", type=int, required=True)
 
+    sub.add_parser("worker", help="run the background worker (all scheduled jobs)")
+
     p = sub.add_parser("sync-day", help="refresh one day's games from the scoreboard")
     p.add_argument("--league", type=League, choices=list(League), required=True)
     p.add_argument("--date", type=date.fromisoformat, default=date.today())
@@ -62,6 +64,12 @@ def main(argv: list[str] | None = None) -> None:
         level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    if args.command == "worker":
+        from hoops.worker import run
+
+        run(settings)
+        return
 
     with psycopg.connect(settings.database_url, autocommit=True) as conn:
         if args.command == "migrate":

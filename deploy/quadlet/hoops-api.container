@@ -1,0 +1,17 @@
+[Unit]
+Description=hoops: API
+Requires=hoops-postgres.service
+After=hoops-postgres.service
+
+[Container]
+ContainerName=hoops-api
+Image=localhost/hoops-backend:latest
+Network=hoops.network
+EnvironmentFile=%h/.config/hoops/hoops.env
+Exec=api
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

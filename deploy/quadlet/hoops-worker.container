@@ -1,0 +1,21 @@
+[Unit]
+Description=hoops: background worker
+Requires=hoops-postgres.service
+After=hoops-postgres.service
+
+[Container]
+ContainerName=hoops-worker
+Image=localhost/hoops-backend:latest
+Network=hoops.network
+Volume=hoops-raw.volume:/data/raw
+EnvironmentFile=%h/.config/hoops/hoops.env
+Exec=worker
+
+[Service]
+Restart=always
+# Heavy jobs (model fitting) must never slow the website.
+Nice=10
+CPUWeight=50
+
+[Install]
+WantedBy=default.target
