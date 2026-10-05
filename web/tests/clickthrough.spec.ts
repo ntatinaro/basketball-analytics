@@ -18,6 +18,17 @@ test("teams table sorts and opens a team page", async ({ page }) => {
   await expect(page.locator(".rating-big")).toBeVisible();
 });
 
+test("tables sort from the keyboard and teams can be found by nickname", async ({ page }) => {
+  await page.goto(`/nba/teams?season=${SEASON}`);
+  const pace = page.getByRole("button", { name: /^Pace/ });
+  await pace.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("columnheader", { name: /Pace/ })).toHaveAttribute("aria-sort", /ascending|descending/);
+  await page.getByLabel("Search teams").fill("sixers");
+  await expect(page.locator("table tbody tr").first()).toContainText("76ers");
+  await expect(page.locator("table tbody tr")).toHaveCount(1);
+});
+
 test("players table: search, scope, and player page", async ({ page }) => {
   await page.goto(`/nba/players?season=${SEASON}`);
   await expect(page.locator("table tbody tr").first()).toBeVisible();

@@ -5,7 +5,7 @@ import { api, type TeamRow } from "../api";
 import { fixed, seasonLabel, signed } from "../format";
 import { DataTable } from "../components/DataTable";
 import { ErrorNote, Loading, RowImage, SeasonPicker, Segmented, useLeague, useSeasonParam } from "../components/ui";
-import { matches } from "../search";
+import { matches, useServerMatches } from "../search";
 
 const col = createColumnHelper<TeamRow>();
 
@@ -51,9 +51,11 @@ export function TeamsPage() {
     col.accessor("conference_abbr", { header: "Conf", meta: { left: true }, cell: (c) => c.getValue() ?? "–" }),
   ], [league, season]);
 
+  const server = useServerMatches(league, "teams", query);
   const rows = useMemo(() => (teams.data?.teams ?? []).filter(
-    (t) => (scope === "all" || t.conference_abbr === scope) && matches(query, [t.name, t.abbreviation, t.location ?? ""]),
-  ), [teams.data, scope, query]);
+    (t) => (scope === "all" || t.conference_abbr === scope)
+      && (matches(query, [t.name, t.abbreviation, t.location ?? ""]) || server?.has(t.id)),
+  ), [teams.data, scope, query, server]);
 
   return (
     <main className="page">

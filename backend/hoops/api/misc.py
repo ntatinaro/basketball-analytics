@@ -36,6 +36,16 @@ PLAYER_ALIASES = {
     "ant": "Anthony Edwards", "ant man": "Anthony Edwards", "the beard": "James Harden",
 }
 
+# Team nicknames, so "sixers" or "dubs" find the right team (ESPN abbreviations).
+TEAM_ALIASES = {
+    "sixers": "PHI", "76ers": "PHI", "philly": "PHI", "dubs": "GS", "cavs": "CLE",
+    "mavs": "DAL", "wolves": "MIN", "t-wolves": "MIN", "twolves": "MIN", "blazers": "POR",
+    "rip city": "POR", "nugs": "DEN", "celts": "BOS", "clips": "LAC", "grizz": "MEM",
+    "pels": "NO", "nola": "NO", "raps": "TOR", "wiz": "WSH", "dc": "WSH", "okc": "OKC",
+    "lal": "LAL", "la": "LAL", "bk": "BKN", "brooklyn": "BKN", "nyk": "NY", "gsw": "GS",
+    "sas": "SA", "uta": "UTAH", "was": "WSH", "nop": "NO", "phx": "PHX", "suns": "PHX",
+}
+
 
 @router.get("/api/{league}/meta")
 def meta(league: str, conn: psycopg.Connection = Depends(get_conn)):
@@ -58,14 +68,18 @@ def search_teams(league: str, q: str = Query(min_length=1, max_length=60),
         """
         SELECT team_id AS id, display_name AS name, abbreviation, logo_url AS logo,
                greatest(similarity(display_name, %(q)s), word_similarity(%(q)s, display_name),
-                        CASE WHEN lower(abbreviation) = lower(%(q)s) THEN 1 ELSE 0 END,
+                        CASE WHEN lower(abbreviation) IN (lower(%(q)s), lower(%(alias)s))
+                             THEN 1 ELSE 0 END,
                         similarity(coalesce(location, ''), %(q)s),
                         similarity(coalesce(name, ''), %(q)s)) AS score
         FROM teams WHERE league = %(league)s
         ORDER BY score DESC, display_name LIMIT 8
         """,
-        {"q": q, "league": str(lg)},
+        {"q": q, "alias": TEAM_ALIASES.get(q.strip().lower(), ""), "league": str(lg)},
     ).fetchall()
+    alias = TEAM_ALIASES.get(q.strip().lower())
+    if alias:                                   # a known nickname means exactly one team
+        return {"results": [r for r in rows if r["abbreviation"] == alias]}
     return {"results": [r for r in rows if r["score"] >= 0.25]}
 
 

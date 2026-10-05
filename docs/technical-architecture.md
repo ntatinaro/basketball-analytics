@@ -130,13 +130,15 @@ About 25 random completed games per season, per league. Rough rates; the build r
 | --- | --- | --- |
 | Schedule sync | Every morning, then every 3 hours | Scoreboards for the past 2 and next 7 days: new games, time changes, postponements |
 | Injury sync | Every 15 minutes on game days | ESPN injury statuses. A change in "Out" players writes a new, unlocked prediction. |
-| Game watcher | Every minute while any game is near tip-off or live | 30 minutes before tip-off: lock the prediction and record the betting line. On final: store the box score and plays, run quality checks, refit ratings, grade the prediction, refresh upcoming predictions and the precomputed stat tables. From V3 also re-run the season simulator. |
-| Overnight corrections | Nightly, about 4 AM Eastern | Re-pull the previous day's games, refit player models, rebuild derived tables |
+| Reference sync | Daily, 4:05 AM Eastern (before overnight corrections) | Teams, conferences, rosters and player details |
+| Game watcher | Every minute while any game is near tip-off or live | 30 minutes before tip-off: lock the prediction and record the betting line. On final: store the box score and plays, run quality checks, grade every finished game, then refit ratings and refresh upcoming predictions once, and refresh the precomputed stat tables. Each game is handled on its own: locking needs nothing from ESPN, and a game that fails to load is retried at most three times, then left to the overnight job. From V3 also re-run the season simulator. |
+| Overnight corrections | Nightly, 4:15 AM Eastern | Re-pull the previous day's games and any final that failed to load, grade any locked prediction still ungraded, refit, prune superseded raw responses older than 7 days |
 | Live poller (V2) | Every ~10 seconds per live game | Live state, both win probability lines, insight cards, NOTIFY to the API |
 | Backfill, backtests, rolling exams | Run by hand | Load past seasons, evaluate candidate models |
 
 **Cross-cutting rules:**
-- Every job run is logged in `job_runs` (start, end, status, error). The API exposes the last successful update; the website shows "Data delayed, last updated …" when it is stale.
+- Every job run is logged in `job_runs` (start, end, status, error, and per-game errors in its details).
+- If the worker loses its database connection it exits, and systemd restarts it with a fresh one. The API exposes the last successful update; the website shows "Data delayed, last updated …" when it is stale.
 - Times are stored in UTC and shown in the viewer's local time zone.
 - Heavy jobs run at low CPU priority so the website stays responsive.
 

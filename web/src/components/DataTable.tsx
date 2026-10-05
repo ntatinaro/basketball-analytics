@@ -82,11 +82,15 @@ export function DataTable<T>({
                     scope="col"
                     className={[canSort ? "sortable" : "", sorted ? "sorted" : "", meta?.left ? "left" : ""].join(" ")}
                     title={meta?.title}
-                    aria-sort={sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : undefined}
-                    onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
+                    aria-sort={sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : canSort ? "none" : undefined}
                   >
-                    {flexRender(header.column.columnDef.header, header.getContext())}
-                    {sorted === "asc" ? " ▲" : sorted === "desc" ? " ▼" : ""}
+                    {canSort ? (
+                      // A real button, so headers can be sorted from the keyboard too.
+                      <button type="button" className="sort-btn" onClick={header.column.getToggleSortingHandler()}>
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        {sorted === "asc" ? " ▲" : sorted === "desc" ? " ▼" : ""}
+                      </button>
+                    ) : flexRender(header.column.columnDef.header, header.getContext())}
                   </th>
                 );
               })}

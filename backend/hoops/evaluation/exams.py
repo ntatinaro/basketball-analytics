@@ -185,6 +185,17 @@ def run_exams(conn: psycopg.Connection, league: League, warmup: int, scored: lis
                                 fit_calibration(lab.predictions(no_roster_settings, tuning),
                                                 no_roster_settings))
         bench = benchmarks(lab, exam, tuning_preds, no_roster)
+        # Backtests know who actually sat out; live predictions only see the injury report.
+        # The winner with absences ignored is the honest floor for live accuracy.
+        floor_settings = replace(choice.members[0], absence_weight=0.0)
+        floor, _ = evaluate(lab, floor_settings, [exam_season],
+                            fit_calibration(lab.predictions(floor_settings, tuning),
+                                            floor_settings))
+        floor_market = floor[floor["game_id"].isin(lab.market)]
+        bench["without_absences"] = metrics.summary(floor["prob"], floor["home_won"])
+        if bench["market"] is not None:
+            bench["without_absences_target"] = target_check(
+                metrics.summary(floor_market["prob"], floor_market["home_won"]), bench["market"])
         exam_metrics = _summary(exam) | {"benchmarks": bench, "target": target_check(
             bench["model_on_market_games"], bench["market"])}
         _record_round(conn, league, round_no, tuning, exam_season, table, choice, exam_metrics,

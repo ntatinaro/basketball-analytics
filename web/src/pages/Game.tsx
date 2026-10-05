@@ -21,7 +21,9 @@ export function GamePage() {
   const g = game.data;
   const tabs: [Tab, string][] = [["preview", "Preview"]];
   if (g.box_score) tabs.push(["box", "Box score"]);
-  const active: Tab = tab ?? (g.default_tab === "box" && g.box_score ? "box" : "preview");
+  // A live game opens on its running box score until the Live tab arrives (V2).
+  const opensOnBox = (g.default_tab === "box" || g.default_tab === "live") && !!g.box_score;
+  const active: Tab = tab ?? (opensOnBox ? "box" : "preview");
   const scored = g.status === "final" || g.status === "live";
 
   return (

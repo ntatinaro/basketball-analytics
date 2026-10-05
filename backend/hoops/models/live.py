@@ -349,8 +349,15 @@ class ModelHooks:
     def lock(self, conn: psycopg.Connection, game_id: int, now: datetime) -> None:
         self.predict_game(conn, game_id, now, lock=True)
 
-    def after_final(self, conn: psycopg.Connection, game_id: int) -> None:
-        self.grade(conn, game_id)
+    def after_finals(self, conn: psycopg.Connection, game_ids: list[int]) -> None:
+        """Grades every newly finished game, then refits and refreshes once."""
+        for game_id in game_ids:
+            try:
+                self.grade(conn, game_id)
+            except (psycopg.OperationalError, psycopg.InterfaceError):
+                raise
+            except Exception:  # noqa: BLE001 - the overnight sweep grades it later
+                log.exception("grading game %s failed", game_id)
         self.refit(conn)
         self.refresh(conn)
 
@@ -358,9 +365,23 @@ class ModelHooks:
         self.refresh(conn)
 
     def overnight(self, conn: psycopg.Connection, league: League) -> None:
+        self.grade_missing(conn)
         self._priors.clear()
         self.refit(conn)
         self.refresh(conn)
+
+    def grade_missing(self, conn: psycopg.Connection) -> int:
+        """Grades any locked prediction of a finished game that has no grade yet (after
+        downtime, or a grading failure), so every locked prediction ends up graded."""
+        rows = conn.execute(
+            """
+            SELECT DISTINCT p.game_id FROM predictions p
+            JOIN games g USING (game_id)
+            LEFT JOIN prediction_grades gr USING (prediction_id)
+            WHERE g.league = %s AND g.status = 'final' AND g.home_score IS NOT NULL
+              AND p.is_locked AND gr.prediction_id IS NULL
+            """, (str(self.league),)).fetchall()
+        return sum(self.grade(conn, game_id) for (game_id,) in rows)
 
     # -- grading ----------------------------------------------------------------------
 

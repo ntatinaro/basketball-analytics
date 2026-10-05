@@ -81,15 +81,22 @@ class RawStore:
             body=env["body"],
         )
 
-    def prune(self, league: str, endpoint: str, older_than: datetime) -> int:
-        """Delete stored responses for an endpoint fetched before `older_than`."""
+    def prune(self, league: str, endpoint: str, older_than: datetime, *,
+              keep_latest: bool = False) -> int:
+        """Delete stored responses for an endpoint fetched before `older_than`. With
+        `keep_latest`, the newest response for each request is always kept, so only
+        superseded copies (repeated polls of the same scoreboard or game) are removed."""
         removed = 0
         base = self.root / league / endpoint
         if not base.is_dir():
             return 0
         stamp = older_than.astimezone(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-        for path in base.glob("*/*.json.gz"):
-            if path.name < stamp:
-                path.unlink()
-                removed += 1
+        for directory in base.iterdir():
+            files = sorted(directory.glob("*.json.gz"))
+            if keep_latest:
+                files = files[:-1]
+            for path in files:
+                if path.name < stamp:
+                    path.unlink()
+                    removed += 1
         return removed

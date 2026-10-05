@@ -107,6 +107,9 @@ def test_player_page_and_search(client):
     assert teams[0]["abbreviation"] == "DET"
     assert client.get("/api/nba/search/teams", params={"q": "DET"}).json()["results"][0][
         "abbreviation"] == "DET"
+    for nickname, abbreviation in (("Sixers", "PHI"), ("dubs", "GS"), ("cavs", "CLE")):
+        found = client.get("/api/nba/search/teams", params={"q": nickname}).json()["results"]
+        assert [t["abbreviation"] for t in found] == [abbreviation]
 
 
 def test_predictions_lock_and_cache_invalidation(client, db):

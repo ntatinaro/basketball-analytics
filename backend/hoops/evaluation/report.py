@@ -22,6 +22,19 @@ def _market_lines(bench: dict, target: dict | None) -> list[str]:
     ]
 
 
+def _floor_lines(bench: dict) -> list[str]:
+    floor = bench.get("without_absences")
+    if floor is None:
+        return []
+    line = (f"  honest floor (absences ignored; backtests otherwise know who sat out): log loss"
+            f" {floor['log_loss']:.4f}  accuracy {_pct(floor['accuracy'])}")
+    target = bench.get("without_absences_target")
+    if target:
+        line += (f"; vs market: accuracy gap {100 * target['accuracy_gap']:+.1f} pts,"
+                 f" log loss gap {target['log_loss_gap']:+.4f}")
+    return [line]
+
+
 def format_exam_report(report: dict) -> str:
     lines = [f"Rolling exams: {report['league']} ({report['candidates']} candidates)", ""]
     for r in report["rounds"]:
@@ -39,6 +52,7 @@ def format_exam_report(report: dict) -> str:
             f"  accuracy {_pct(bench['naive']['accuracy'])}",
             f"  without roster start: log loss {bench['without_roster_start']['log_loss']:.4f}",
             *_market_lines(bench, target),
+            *_floor_lines(bench),
             "",
         ]
     champ = report["champion"]
