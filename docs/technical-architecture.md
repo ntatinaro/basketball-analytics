@@ -74,7 +74,7 @@ Not used, by decision: Redis, Parquet/DuckDB, Next.js, Go, Docker, `nba_api`.
 | Shot coordinates | Missing values use large negative sentinels. Treat them as missing. |
 | Substitutions | NBA: "X enters the game for Y", consistent in sampled games from 2018-19 on. College: separate "subbing in" and "subbing out" events; present in recent seasons, absent in some older ones. |
 | Division I | 362 Division I teams. Non-Division I opponents are common in November and easy to identify. |
-| Betting lines | For a recent game, the summary line equalled the core API's labeled closing line. Older games have no open/close labels. From launch, we record lines ourselves near tip-off. |
+| Betting lines | For a recent game, the summary line equalled the core API's labeled closing line. Game summaries have no lines at all for NBA 2023-24 and 2024-25 (and about a fifth of 2025-26); the core odds endpoint has labeled closing lines for those games, so the backfill fills them from there. 2021-22 and 2022-23 lines come from the summaries, without open/close labels. From launch, we record lines ourselves near tip-off. |
 | NBA.com | Out of scope, by decision. |
 
 ### 4.3 Data quality sample (2026-10-05)

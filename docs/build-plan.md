@@ -104,10 +104,10 @@ Depends on: Sprint 1.2. Can run in parallel with Sprint 1.3.
 - [x] Walk-forward backtest harness (no future data).
 - [x] Metrics: log loss, Brier score, accuracy, calibration, margin and total error.
 - [x] Benchmarks: naive baseline, model without the roster starting point, betting market with the bookmaker margin removed.
-- [ ] Rolling exams (section 9.2): 2021-22 warm-up; three rounds; 20 to 50 candidates per round; winner chosen on tuning seasons only; ties to the simpler method; top-three blend as a candidate.
-- [ ] Report the results against the accuracy target (within 1.5 points of market accuracy and 0.01 of market log loss; clearly better than the naive baseline).
-- [ ] Sanity check: final-season ratings against public ratings such as ESPN's BPI.
-- [ ] Tune the final model on all four scored seasons; record it as the champion.
+- [x] Rolling exams (section 9.2): 2021-22 warm-up; three rounds; 20 to 50 candidates per round; winner chosen on tuning seasons only; ties to the simpler method; top-three blend as a candidate.
+- [x] Report the results against the accuracy target (within 1.5 points of market accuracy and 0.01 of market log loss; clearly better than the naive baseline).
+- [x] Sanity check: final-season ratings against public ratings such as ESPN's BPI.
+- [x] Tune the final model on all four scored seasons; record it as the champion.
 - [x] Hook the models into the worker: on final, refit ratings, grade the locked prediction, refresh upcoming predictions; lock predictions 30 minutes before tip-off.
 - [ ] Review the exam results with the owner.
 
