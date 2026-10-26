@@ -289,13 +289,13 @@ Read-only JSON under `/api`. `{league}` is `nba` or `ncaam`. Team and player end
 ## 13. Deployment and operations
 
 - **Code** lives in the owner's GitHub repository.
-- **Deploy:** the owner runs `./deploy.sh` on the VPS. It pulls the latest code, builds the images with Podman, applies database migrations, and restarts the services. Deploy never touches the owner's existing services.
+- **Deploy:** the owner runs `./deploy/deploy.sh` on the VPS. It pulls the latest code, builds the images with Podman, applies database migrations, and restarts the services. Deploy never touches the owner's existing services. The first time, `./deploy/setup.sh` checks the server, creates the settings, loads the data, runs the exams, and starts the worker last, so nothing is predicted or locked before the models are chosen (V1.2).
 - **Secrets and settings:** a `.env` file on the VPS, never committed.
 - **Services:** Quadlet units for `postgres`, `api`, `worker`, and `web`. Only `web` is reachable, on `127.0.0.1:8080`.
 - **Public access:** the owner's existing Caddy (probably in a container) serves `hoops.<owner's domain>` with HTTPS and forwards to the app. If that Caddy runs in a container, it reaches the app through a shared Podman network or the host address rather than `127.0.0.1`; confirm with `podman ps` at deploy time. The owner adds a DNS record for the subdomain.
 - **Admin panel (V1.1):** at `/nba/admin`. One password (`HOOPS_ADMIN_PASSWORD`); sessions are cookies signed with `HOOPS_SECRET_KEY` (HttpOnly, Secure, SameSite=Strict, 30 days), and failed logins are capped at 10 per 15 minutes for everyone together (behind two proxies the API cannot tell callers apart). A known trade-off: someone who finds the login can keep the owner locked out by failing every 90 seconds; acceptable for a read-only panel on an unpublicised link. Without both the password and the secret key the panel is switched off (without a fixed key, every restart would log the owner out). View only. Shows models (versions, settings, champion and challengers), rolling exam results, live accuracy against the target, training and job history, and data quality reports. Training runs and exam results are recorded from V1, so the history is complete. Actions (start a backtest, promote a challenger, re-run a job) come later.
 - **Monitoring:** the "data delayed" note on the site, and the admin panel from V1.1. No email or phone alerts at launch.
-- **Backups:** none at launch, by decision. To be revisited. Note: locked prediction history cannot be recreated from ESPN.
+- **Backups (V1.2):** a nightly compressed `pg_dump` (`hoops-backup.timer`) to `~/hoops-backups` on the VPS, newest 7 kept, with a tested restore. Locked prediction history cannot be recreated from ESPN, so this replaces the launch decision of no backups. The copies are on the same disk: the owner copies them elsewhere now and then. Raw ESPN files are not backed up; a backfill downloads them again.
 
 ## 14. Testing strategy
 
@@ -329,7 +329,7 @@ GitHub Actions runs lint and tests on every push.
     api/              FastAPI app and routers
   tests/
 /web                  React + Vite + TypeScript
-/deploy               Quadlet units, Containerfiles, internal Caddyfile, deploy.sh, .env.example
+/deploy               Quadlet units, backup timer, Containerfiles, internal Caddyfile, setup.sh, deploy.sh, backup.sh, .env.example
 /.github/workflows    CI
 ```
 
@@ -345,7 +345,7 @@ Scope by version, from feature spec section 7.
 | V3 | Player impact, shot quality, lineups, play style, season simulator | Each add-on has a rolling exam result |
 | V4 | NCAA Division I backfill from 2021-22, ratings, predictor, core screens, ESPN live win probability line, season simulator | College predictions graded daily well before March |
 | V5 | Field projection, bracket simulator with likely upsets, our NCAA live win probability | Ready when the bracket is announced |
-| Later | Compare screen, share links, admin actions, sign-in if needed, backups | |
+| Later | Compare screen, share links, admin actions, sign-in if needed, off-server backups | |
 
 ## 17. Risks
 
@@ -357,7 +357,7 @@ Scope by version, from feature spec section 7.
 | Old betting lines are not closing lines | Backtest market comparison less precise | Label line kind; grade against our own captured lines from launch |
 | Only four scored seasons | Model choices are less certain | Few tuning settings, rolling exams, ties go to the simpler method, live season as the fresh exam |
 | VPS has 2 cores shared with other services | Slow site during heavy jobs | Low CPU priority for heavy jobs; precomputed tables; in-memory API cache |
-| No backups at launch | A disk failure loses locked prediction history | Revisit backups soon after launch |
+| Backups on the same disk | A disk failure loses locked prediction history | Nightly dumps from V1.2; the owner copies them off the VPS now and then; off-server backups later |
 | Open link | The app could spread beyond the friend group | Do not publicize it; add sign-in if needed |
 | Live feed delay (V2) | Insights arrive after the broadcast | Measure before V2; set expectations in the interface |
 
@@ -367,7 +367,7 @@ Scope by version, from feature spec section 7.
 2. The exact ESPN injuries endpoint path (check during build).
 3. Live feed delay behind the broadcast (measure before V2).
 4. Whether the existing Caddy runs in a container, and how it reaches the app (check at deploy).
-5. Backups (revisit after launch).
+5. Off-server backups: where to copy the nightly dumps (owner).
 6. For V5: load older tournament selection history for the field projection model only?
 7. NCAA "Qualified only" minimums (75% of games; 5 field goals, 2.5 threes, 2.5 free throws made per game) to be reconfirmed against the official NCAA rules before V4.
 

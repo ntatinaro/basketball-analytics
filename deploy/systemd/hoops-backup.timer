@@ -1,0 +1,11 @@
+[Unit]
+Description=hoops: nightly database backup
+
+[Timer]
+# After the night's games and the worker's overnight jobs (04:15 New York time).
+OnCalendar=*-*-* 10:00:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

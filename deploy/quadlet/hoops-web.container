@@ -12,6 +12,8 @@ PublishPort=127.0.0.1:8080:8080
 
 [Service]
 Restart=always
+# Waiting between restarts keeps systemd retrying if the API it forwards to starts slowly.
+RestartSec=5
 MemoryHigh=96M
 MemoryMax=128M
 

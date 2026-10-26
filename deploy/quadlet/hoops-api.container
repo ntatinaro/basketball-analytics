@@ -12,6 +12,9 @@ Exec=api
 
 [Service]
 Restart=always
+# Podman before 5.0 ignores Notify=healthy on the database, so this can start before
+# Postgres accepts connections; waiting between restarts keeps systemd retrying.
+RestartSec=5
 MemoryHigh=384M
 MemoryMax=512M
 
