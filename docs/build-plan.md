@@ -88,6 +88,8 @@ Depends on: Sprint 1.2.
 
 Done when: the VPS updates games, injuries, and lines on its own, and `job_runs` shows the history.
 
+The first VPS deploy did not happen before preseason ended; the open items above move to V1.2.
+
 ### Sprint 1.4: V1 models and rolling exams
 
 Goal: ratings and predictions that have been tested on past seasons.
@@ -164,6 +166,8 @@ Depends on: Sprints 1.3 to 1.6.
 
 - [ ] Deploy the full V1 to the VPS.
 - [ ] Dress rehearsal on NBA preseason games, with preseason games temporarily treated as predictable in a rehearsal mode (excluded from public grading): schedule sync, prediction lock 30 minutes before tip-off, game final, ratings refit, grading, report card update.
+  - [x] Local rehearsal on one night of five preseason games: predictions locked 30 minutes before tip-off with the pregame line captured; finals loaded with quality checks (one ESPN play-by-play gap flagged as designed); closing lines stored; locked predictions graded with the market's chance; ratings refit after each final; screen tables refreshed; the public report card leaves rehearsal grades out. It found in-game "Live Odds" stored as a closing line (fixed in V1.2). The local machine stops when idle, so one lock was missed there.
+  - Not held on the VPS: preseason ended before the first VPS deploy. V1.2 deploys straight into the season instead, and the owner watches a few nights of locks and grades before telling the friends.
 - [x] Simulate an ESPN outage and confirm the "data delayed" note appears and the system recovers.
 - [x] Check the performance budget on a mid-range phone (first load under 2 seconds on 4G; sort or scope switch under 100 ms; smooth scrolling).
 - [ ] Owner manual testing; fix what it finds.
@@ -172,6 +176,8 @@ Depends on: Sprints 1.3 to 1.6.
 - [ ] Tell the friends.
 
 Done when: opening-night predictions are locked and graded automatically, and the site is live at `hoops.<domain>`.
+
+Opening night passed before the first VPS deploy; the open items above move to V1.2.
 
 ---
 
@@ -208,9 +214,35 @@ Done when: the owner can see training history, exam results, live accuracy again
 
 ### Sprint 1.1.3: V1.1 testing and deploy
 
-- [ ] Tests for projections, admin login, and shadow grading.
-- [ ] Playwright click-through of the Projections tab and admin panel.
-- [ ] Deploy; owner manual testing.
+- [x] Tests for projections, admin login, and shadow grading.
+- [x] Playwright click-through of the Projections tab and admin panel.
+- [ ] Deploy; owner manual testing (moves to V1.2).
+
+---
+
+## V1.2: First VPS deploy, into the running season
+
+V1 and V1.1 go live together. The season has started, so there is no preseason rehearsal: the worker starts only after the backfill and the exams, and the owner watches the first nights before telling the friends.
+
+### Sprint 1.2.1: Deploy kit and fixes
+
+- [x] Closing lines: skip ESPN's in-game "Live Odds" provider, whose "close" is its last in-game line; migration 0010 removes any already stored.
+- [x] `deploy/setup.sh`: one-time setup on a Linux VPS. Checks the server (not root, Podman 4.4 or newer, user session, linger, disk, memory, port 8080), creates `deploy/.env` with generated secrets, deploys, loads every season through the current one, runs the game and projection exams, builds rating history, predicts upcoming games, and starts the worker last. Re-runnable: finished steps are skipped.
+- [x] The worker stays off while the setup runs, even across a reboot (`deploy.sh` and a start condition on the service).
+- [x] Nightly database backups (`hoops-backup.timer`, newest 7 kept) with a tested restore.
+- [x] Services retry every 5 seconds when started before the database is ready (Podman before 5.0 ignores `Notify=healthy`).
+- [x] Deploy guide: server requirements, the setup script, the same steps by hand, backups and restore.
+
+### Sprint 1.2.2: Deploy and owner testing
+
+- [ ] With the owner: confirm how the existing Caddy runs (`podman ps`), add the `hoops.<domain>` block, and add the DNS record.
+- [ ] Run `deploy/setup.sh` on the VPS; review the data quality report and the exam results.
+- [ ] Confirm jobs run on schedule: locks 30 minutes before tip-off, finals stored and graded, ratings refit, overnight job, nightly backup.
+- [ ] Projections and shadow predictions graded on real games.
+- [ ] Owner manual testing on phone and desktop, including the admin panel; fix what it finds.
+- [ ] Tell the friends.
+
+Done when: the site is live at `hoops.<domain>`, and a few nights of predictions and projections have locked and graded on their own.
 
 ---
 

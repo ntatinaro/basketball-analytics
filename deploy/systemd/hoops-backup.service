@@ -1,0 +1,9 @@
+[Unit]
+Description=hoops: database backup
+Requires=hoops-postgres.service
+After=hoops-postgres.service
+
+[Service]
+Type=oneshot
+Nice=10
+ExecStart=%h/.config/hoops/backup.sh

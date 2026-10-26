@@ -117,3 +117,13 @@ def test_close_lines_from_odds_endpoint_skip_live_odds():
     line = lines[0]
     assert (line.provider, line.spread_home, line.total) == ("ESPN BET", 3.5, 229.5)
     assert (line.home_moneyline, line.away_moneyline) == (130, -155)
+
+
+def test_live_odds_are_skipped_even_with_a_close():
+    # Game 401914102 (2026 preseason): after the game, the live entry carries a "close" too,
+    # which is its last in-game line (MIL +17.5 against a pregame +5.5).
+    close = {"pointSpread": {"american": "+17.5"}, "moneyLine": {"american": "+400"}}
+    body = {"items": [{"provider": {"id": "200", "name": "DraftKings - Live Odds"},
+                       "homeTeamOdds": {"close": close}, "close": {"total": {"american": "o216.5"}},
+                       "spread": 17.5, "overUnder": 216.5}]}
+    assert parse.parse_close_lines(body) == []

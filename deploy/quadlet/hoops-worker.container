@@ -13,6 +13,12 @@ Exec=worker
 
 [Service]
 Restart=always
+# Podman before 5.0 ignores Notify=healthy on the database, so this can start before
+# Postgres accepts connections; waiting between restarts keeps systemd retrying.
+RestartSec=5
+# Off while deploy/setup.sh runs (even after a reboot): nothing is predicted or locked
+# before the models are chosen.
+ExecCondition=/bin/sh -c '! test -f %h/.config/hoops/setup-in-progress'
 # Heavy jobs (model fitting) must never slow the website.
 Nice=10
 CPUWeight=50
