@@ -475,6 +475,9 @@ def parse_close_lines(body: dict[str, Any]) -> list[BettingLine]:
     """Labeled closing lines from the core odds endpoint, where ESPN provides them."""
     lines = []
     for item in body.get("items") or []:
+        provider = (item.get("provider") or {}).get("name") or "unknown"
+        if "live" in provider.lower():
+            continue              # in-game odds: their "close" is the last in-game line
         home_close = ((item.get("homeTeamOdds") or {}).get("close") or {})
         away_close = ((item.get("awayTeamOdds") or {}).get("close") or {})
         if not home_close and not item.get("close"):
@@ -482,7 +485,7 @@ def parse_close_lines(body: dict[str, Any]) -> list[BettingLine]:
         spread = to_float((home_close.get("pointSpread") or {}).get("american"))
         total = to_float(((item.get("close") or {}).get("total") or {}).get("american"))
         lines.append(BettingLine(
-            provider=(item.get("provider") or {}).get("name") or "unknown",
+            provider=provider,
             spread_home=spread if spread is not None else item.get("spread"),
             total=total if total is not None else item.get("overUnder"),
             home_moneyline=to_int((home_close.get("moneyLine") or {}).get("american")),
